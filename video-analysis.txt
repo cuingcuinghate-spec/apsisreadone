@@ -1,0 +1,131 @@
+# Analisis Detail Video untuk Keperluan Replikasi Aplikasi
+
+## 1. JENIS APLIKASI
+- **Nama:** APSIS (versi V1.0, tertera juga "PRO" pada logo di dalam aplikasi)
+- **Jenis:** Aplikasi edukasi berbasis web (*web app* berbasis AI) untuk guru — **Aplikasi Pembuat Soal dan Analisis**. Digunakan untuk membuat naskah soal ujian, kisi-kisi, kunci jawaban, kartu soal, analisis butir soal (CTT), analisis nilai (KKTP), kuis interaktif, dan simulasi TKA 2026.
+
+## 2. WARNA & DESAIN
+- **Warna utama (primary):** Hijau teal gelap ≈ `#0E5E56` / `#145C54` (logo, tombol "Masuk ke Aplikasi", tombol tab aktif, header kartu soal, tombol "Selanjutnya").
+- **Background:** Gradasi putih ke mint pastel ≈ `#EEF7F3` – `#F5FAF8`.
+- **Kartu:** Putih `#FFFFFF` dengan border tipis abu mint dan sudut membulat (radius ~10–14px).
+- **Aksen:** Kuning caption video; oranye/amber `#F59E0B` untuk badge "FITUR BONUS" dan tombol "DOWNLOAD KARTU SOAL (.DOC)"; navy gelap `#1E293B` untuk tombol "+ TAMBAH KE STRUKTUR"; hijau sukses `#2E7D5B` untuk jawaban benar/hijau bar; merah muda `#FDE8E8` + teks merah untuk jawaban salah/rekomendasi buang; kuning muda untuk peringatan/perlu revisi.
+- **Gaya desain:** Modern flat/minimalis, card-based, tipografi sans-serif tebal (heading), label form uppercase kecil berhuruf abu-abu, badge pill kecil, efek hover/transition halus.
+
+## 3. LAYAR/SCREEN (berurutan dengan timestamp)
+
+### Screen 1: Landing Page (00:00–00:15)
+- Header: logo APSIS + badge "V1.0".
+- Judul besar: "Selamat Datang di APSIS" (kata "APSIS" berwarna teal), subjudul hijau "Aplikasi Pembuat Soal dan Analisis".
+- Paragraf deskripsi panjang tentang platform cerdas terintegrasi.
+- Tombol teal "Masuk ke Aplikasi →" + link "Daftar Akun Baru".
+- 3 kartu fitur bertumpuk vertikal, masing-masing dengan ikon, judul, deskripsi, badge kanan-atas:
+  1. "Pembuat Soal & Kartu Soal" — badge "FITUR UTAMA" (teal)
+  2. "Analisis Soal & Analisis Nilai" — badge "FITUR UTAMA"
+  3. "Simulasi CAT TKA 2026" — badge "FITUR BONUS" (oranye)
+- Footer: "© 2026 APSIS. Hak Cipta Dilindungi Undang-Undang. | Version 1.0 (Stable)".
+
+### Screen 2: Form Identitas — "Profil Ujian & Sasaran Pembelajaran" (00:16–00:39)
+- Header dengan logo APSIS PRO + ikon menu hamburger kanan.
+- Kartu "PROFIL DASAR UJIAN" (note: "Semua field wajib diisi") berisi:
+  - Input "NAMA GURU / PENYUSUN" (diisi "Andika")
+  - Input "NAMA SATUAN PENDIDIKAN" (diisi "SD 1 Depok")
+- Kartu "HIERARKI KURIKULUM & SASARAN PESERTA DIDIK": dropdown berurutan — 1. Jenjang Pendidikan (opsi: SD/MI, SMP/MTs, SMA/MA, Kejuruan, SMPLB, SMALB → dipilih SD/MI), 2. Fase Pembelajaran (Fase A/B/C → Fase A), 3. Tingkat/Kelas (Kelas 1).
+- Input "MATA PELAJARAN" (Matematika) dan textarea "TOPIK / LINGKUP CAPAIAN PEMBELAJARAN" (Penjumlahan).
+- Tombol navy "Lanjut ke Konfigurasi Teknis →".
+- Saat beberapa layar, muncul **sidebar kiri** "Alur Pembuatan Soal": 1. Identitas & Profil (OK), 2. Teknis & Kisi-Kisi (Konfigurasi Bagian, Struktur Paket 1), 3. Naskah & Hasil; bagian "ANALISIS & INTERAKTIF": Analisis Nilai (KXTP), Analisis Butir Soal (CTT), Mode Quiz Kelas, Simulasi TKA (BONUS); footer sidebar "Akun Guru – @guru7".
+
+### Screen 3: Konfigurasi Teknis — "Konfigurasi Teknis & Spesifikasi Soal" (00:40–01:21)
+- Kartu "+ INPUT BAGIAN SOAL":
+  - Dropdown "BENTUK SOAL": Pilihan Ganda, Pilihan Ganda Kompleks, Benar/Salah, Isian Singkat, Uraian/Essai (dipilih Pilihan Ganda).
+  - Segmen "JUMLAH OPSI": ABC / ABCD / ABCDE (dipilih ABC).
+  - Checkbox "TAMBAH GAMBAR DI NASKAH SOAL" (dengan catatan peringatan).
+  - "TINGKAT KESULITAN": checkbox Mudah, Sedang, Sulit masing-masing dengan spinner angka (diisi 3, 2, 1 → "Total Soal Bagian Ini: 6").
+  - "DIMENSI KOGNITIF": dua baris kartu pilihan — LOTS (C1 Mengingat, C2 Memahami, C3 Menerapkan), HOTS (C4 Menganalisis, C5 Mengevaluasi, C6 Mencipta) — C1 dan C2 di-highlight teal saat dipilih.
+- Tombol navy lebar "+ TAMBAH KE STRUKTUR".
+- Modal "CUSTOM INSTRUCTION (OPSIONAL)" (header teal, tombol X): kotak kuning "Contoh penggunaan:" (Bahasa Inggris, Bahasa Arab, PAI, Gaya penulisan, Format), textarea "TULIS INSTRUKSI TAMBAHAN (OPSIONAL)", tombol "Saya tidak pakai instruksi" dan "+ Tambah dengan instruksi".
+- Kartu "STRUKTUR PAKET SOAL": badge "BAGIAN 1" hijau, "PILIHAN GANDA — ABC (3 opsi)", tabel "DISTRIBUSI SOAL": Total 6, Mudah 3, Sedang 2, Sulit 1; kolom "KOGNITIF" chip C1, C2; ikon hapus.
+- Tombol hijau besar dengan ikon ✏️ "BUAT NASKAH SOAL".
+
+### Screen 4: Loading & Pratinjau — "Pratinjau Naskah & Kisi-Kisi Ujian" (01:21–02:13)
+- Loading: spinner teal, teks "MEMPROSES BAGIAN 1 (PILIHAN GANDA)... BATCH 1 DARI 1", kotak peringatan kuning "PERINGATAN PENTING: Jangan tutup halaman ini...".
+- Baris tab: NASKAH SOAL | KUNCI JAWABAN | KISI-KISI | KARTU SOAL. Tombol teal "DOWNLOAD .DOC" dan "KUNCI EXCEL (ANALISIS SOAL)".
+- **Tab Naskah Soal:** dokumen "NASKAH SOAL UJIAN — SD 1 Depok", "BAGIAN 1: PILIHAN GANDA", 6 soal cerita matematika, masing-masing dilengkapi ilustrasi AI (kartun anak apel, kotak bola, dll.) dengan panel "EDIT PROMPT / BUAT ULANG / HAPUS", opsi A/B/C.
+- **Tab Kunci Jawaban:** tabel "KUNCI JAWABAN UJIAN" No. 1–6 (B.5, A.7, B.3, B.14, B.15, B.8+8).
+- **Tab Kisi-Kisi:** tabel "KISI-KISI PENULISAN SOAL" kolom: Bagian, No, Materi, Indikator, Level (C1 Mudah, C1 Mudah, C3 Sedang, C2 Sedang, dst.).
+- **Tab Kartu Soal:** banner hijau "DOKUMEN RESMI KARTU SOAL (FORMAT KEMENDIKBUDRISTEK)" + tombol oranye "DOWNLOAD KARTU SOAL (.DOC)" dan teal "CETAK KARTU"; filter "TAMPILAN: Semua Kartu (6) | Per Butir Soal" dengan navigasi nomor 1–6; tiap kartu menampilkan: Satuan Pendidikan, Penyusun, Mata Pelajaran, Kelas/Fase, Tahun Pelajaran 2026/2027, CAPAIAN PEMBELAJARAN (CP)/KD, MATERI POKOK, LEVEL KOGNITIF (chip "C1 (Mudah)"), INDIKATOR SOAL, BUKU SUMBER/ACUAN, dan RUMUSAN BUTIR SOAL lengkap dengan gambar, opsi (opsi kunci di-highlight hijau + tag "Kunci"), "KUNCI JAWABAN: B. 5" dan "PEDOMAN PENSKORAN/BOBOT: Skor 1 jika benar".
+
+### Screen 5: Analisis Butir Soal (CTT) (02:13–02:45 & 04:27–04:49)
+- Judul: "Analisis Butir Soal (Classical Test Theory)" + deskripsi.
+- Tab: Input Jawaban | Hasil Analisis Butir (CTT) | Analisis Nilai Siswa (badge KXTP); tombol "Cetak / PDF", "Export Excel".
+- Input Jawaban: tombol "+ Tambah Siswa", "Kunci Jawaban", "Template", "Import Excel"; pengatur "Jumlah Soal: 10" dan pilihan "Opsi: 3 (A B C) / 4 / 5".
+- **Matriks Respon Siswa (35 Siswa • 10 Soal):** baris siswa (Vino Bastian, Intan Permata, Kirana Wulandari, Naufal Akbar, Umi Kalsum, Lutfi Hakim, Joko Susilo, Cinta Ayu Kusuma, Siti Nurhaliza, dll.) dengan kolom skor dan sel jawaban A/B/C berwarna hijau (benar) / merah muda (salah).
+- **Tab Hasil:** kartu ringkasan — "RELIABILITAS KR-20: 0.62 Reliabel", "RATA-RATA NILAI: 6.43 /10 Soal", "STATUS BUTIR SOAL: 8 Baik, 1 Revisi, 1 Buang", "UKURAN SAMPEL: 35 Siswa (Kelompok 27% Atas/Bawah)"; filter chip: Semua / Pertahankan / Revisi / Buang; tombol "Mode Fokus", "Tabel Lengkap".
+- **Daftar Butir Soal (10):** tiap butir: "Soal #1 Kunci: B — P: 0.97 (Mudah) • D: +0.11" → tombol merah "Buang"; "Soal #2 — P: 0.66 (Sedang) • D: +0.56" → "Pertahankan"; "Soal #9 — P: 0.83 • D: +0.22" → "Revisi".
+- **Detail Butir #1:** teks pertanyaan "Hasil dari 3 + 2 adalah…", rincian opsi (kunci B = 5), kotak merah "REKOMENDASI: BUANG — Daya pembeda lemah (<0.20)...", meter "Tingkat Kesulitan (P): 0.97 Mudah — 34 dari 35 siswa menjawab benar", "Daya Pembeda (D): +0.11 — Jelek, sebaiknya diganti", bagian "Distribusi Pemilih & Analisis Pengecoh" (Opsi A 0% TIDAK BERFUNGSI, Opsi B KUNCI 34 siswa/97.1%, Opsi C 1 siswa/2.9%) dan "Daftar Kelompok Atas (KA) & Kelompok Bawah (KB)".
+- Detail Butir #9: kotak kuning "REKOMENDASI: REVISI — Daya pembeda cukup (0.20–0.29)".
+
+### Screen 6: Analisis Nilai & Ketuntasan Belajar Siswa (02:45–03:26 & 04:11–04:27)
+- Deskripsi evaluasi capaian, KKTp, remedial. Tombol "Import Excel", "Export Excel", "Cetak / PDF". Chip "35 Siswa Terdaftar • 10 Butir Soal", link "Buka Matriks Jawaban →".
+- Kartu "KRITERIA KETUNTASAN MINIMAL (KKM / KTP)": slider 70/100, preset chip 65/70/75/80.
+- Kartu statistik: "RATA-RATA KELAS: 64.3 /100 (Selisih KKM −5.7)", "RENTANG NILAI (MIN/MAX): 30 – 100 (Rentang Sebaran 70.0 poin)", "STANDAR DEVIASI (Z): 21.15 (Sebaran Heterogen)", "KETUNTASAN KLASIKAL (TARGET ≥ 85%): 54.3% (19 Tuntas • 16 Remedial)" + progress bar merah + tag "PERLU REMEDIAL KLASIKAL".
+- "Distribusi Nilai Siswa" — bar chart horizontal: 90–100 (6, teal, 17.1%), 80–89 (9, 25.7%), 70–79 (4, biru), 60–69 (3, oranye), <60 (13, merah, 37.1%).
+- Tabel "Daftar Nilai & Status Ketuntasan Siswa" (filter Semua 35 / Tuntas 19 / Remedial 16): kolom Rank, Nama, Jawaban Benar, Skor (0–100), KKM, Status Ketuntasan (chip "TUNTAS" hijau / "BELUM TUNTAS" merah), Materi yang Belum Dikuasai.
+- "Analisis Capaian per Tujuan Pembelajaran (TP) / Materi": Tujuan Pembelajaran 2 (Soal 6-10) MATERI KRITIS 57.1%, Tujuan Pembelajaran 1 (Soal 1-5) CUKUP 71.4%.
+- "Rekomendasi Tindak Lanjut & Kelompok Remedial": "16 Siswa Perlu Remedial", daftar siswa dengan skor (Cinta Ayu Kusuma 30, Indah Permatasari 30, Naufal Akbar 30, dll.) dan tombol "REMEDIAL".
+
+### Screen 7: Mode Kuis Interaktif (03:26–03:27)
+- "Persiapan Mode Kuis Interaktif — Tampilkan soal pada layar proyektor untuk asesmen formatif..."
+- Panel "MODE QUIZ INTERAKTIF", "DAFTAR SOAL SIAP KUIS — Total Soal: 6", tiap soal ada tombol "Buat Ulang Gambar", "Hapus Gambar", "Buat Soal Ulang".
+- Tombol hijau "▶ MULAI KUIS INTERAKTIF".
+- Mode kuis: header "SOAL 1 DARI 6", soal + ilustrasi, opsi A 4 / B 5 / C 6; klik jawaban → opsi benar berubah hijau dengan tanda ✓; tombol "Selanjutnya →".
+
+### Screen 8: Simulator TKA 2026 (03:28–03:58)
+- Judul "SIMULATOR TKA 2026" dengan deskripsi paket simulasi Tes Kemampuan Akademik standar Kemendikdasmen 2026 (HOTS, stimulus mendalam, durasi 75 menit/subtes).
+- Dropdown "JENJANG PENDIDIKAN" (SD/MI Sederajat, SMP/MTs Sederajat, SMA/MA/SMK Sederajat) dan "SUBTES (MATA PELAJARAN)" (Literasi Bahasa Indonesia, Numerasi/Matematika).
+- "MODE JUMLAH SOAL & STANDAR KEMENDIKDASMEN": tombol pilihan Standar Resmi (30 Soal), Latihan (10 Soal), Mini Drill (5 Soal); tombol "⟳ BUAT SIMULASI BARU".
+- Loading: "SEDANG MEMBUAT SIMULASI TKA (5 BUTIR SOAL)..." + kotak peringatan kuning.
+- Hasil: "NASKAH SIMULASI TKA SIAP — 5 Butir Soal — Standar Kemendikdasmen 2026", tombol teal "⬇ UNDUH WORD (.DOC)" dan "▶ MULAI SIMULASI"; naskah berupa soal literasi berstimulus teks panjang (kain tenun, kasus demam berdarah, perkembangan mini Sutet Kelas, burung Semut) dengan opsi A–D.
+
+### Screen 9: Rekap akhir (03:58–04:49)
+- Perputaran antar layar: sidebar alur, kartu soal per butir (nomor 1–6, termasuk C2 Sedang dan C2 Sulit), Analisis Nilai, Matriks Respon, dan detail butir #1 dan #9 lagi — sebagai penutup promosi.
+
+## 4. FITUR (semua yang terlihat)
+1. **Landing page** dengan CTA masuk/daftar.
+2. **Form identitas ujian** (nama guru, satuan pendidikan, jenjang → fase → kelas berantai, mapel, topik/CP).
+3. **Konfigurasi teknis soal**: 5 bentuk soal, jumlah opsi (3/4/5), tambah gambar di naskah, distribusi tingkat kesulitan dengan counter, dimensi kognitif C1–C6 (LOTS/HOTS), custom instruction opsional (modal), tambah ke struktur, ringkasan struktur paket.
+4. **Generator naskah soal AI** dengan progress "batch", peringatan jangan tutup halaman.
+5. **Pratinjau 4 tab**: Naskah Soal (soal + ilustrasi AI, edit prompt/buat ulang/hapus), Kunci Jawaban, Kisi-Kisi (materi, indikator, level kognitif), Kartu Soal per butir (format Kemendikbudristek: CP/KD, materi pokok, indikator, buku sumber, rumusan butir, kunci, pedoman penskoran; tampil semua kartu/per butir).
+6. **Ekspor dokumen**: Download .DOC (naskah & kartu soal), unduh Word simulasi TKA, Cetak kartu, Cetak/PDF, Export Excel, Kunci Excel (analisis soal), Import Excel, Template.
+7. **Analisis Butir Soal (CTT)**: input jawaban per siswa (matriks respon berwarna), kunci jawaban, KR-20, rata-rata, status butir (baik/revisi/buang), P (tingkat kesulitan), D (daya pembeda), analisis pengecoh, kelompok atas/bawah, rekomendasi otomatis, filter & mode fokus, detail per butir.
+8. **Analisis Nilai (KKTP)**: KKM bisa diatur, statistik kelas (rata-rata, rentang, standar deviasi), ketuntasan klasikal, distribusi nilai (grafik), daftar nilai & status per siswa, materi yang belum dikuasai, capaian per TP, rekomendasi remedial & daftar siswa remedial.
+9. **Mode Kuis Interaktif** untuk kelas (proyektor): persiapan (regenerasi gambar/soal), sesi kuis dengan umpan balik benar/salah.
+10. **Simulator TKA 2026**: pemilihan jenjang & subtes, 3 mode jumlah soal, generate simulasi berstandar Kemendikdasmen dengan stimulus HOTS.
+11. **Sidebar alur pengerjaan** dengan status penyelesaian dan akun guru.
+
+## 5. TEKS (label & copy penting)
+- "Selamat Datang di APSIS", "Aplikasi Pembuat Soal dan Analisis", "Masuk ke Aplikasi", "Daftar Akun Baru", "FITUR UTAMA", "FITUR BONUS", "Pembuat Soal & Kartu Soal", "Analisis Soal & Analisis Nilai", "Simulasi CAT TKA 2026".
+- "Profil Ujian & Sasaran Pembelajaran", "PROFIL DASAR UJIAN", "Semua field wajib diisi", "NAMA GURU / PENYUSUN", "NAMA SATUAN PENDIDIKAN", "HIERARKI KURIKULUM & SASARAN PESERTA DIDIK", "Lanjut ke Konfigurasi Teknis".
+- "Konfigurasi Teknis & Spesifikasi Soal", "INPUT BAGIAN SOAL", "BENTUK SOAL", "JUMLAH OPSI", "TAMBAH GAMBAR DI NASKAH SOAL", "TINGKAT KESULITAN" (Mudah/Sedang/Sulit), "DIMENSI KOGNITIF", "LOTS (LOWER ORDER)", "HOTS (HIGHER ORDER)", "TAMBAH KE STRUKTUR", "CUSTOM INSTRUCTION (OPSIONAL)", "STRUKTUR PAKET SOAL", "BAGIAN 1", "DISTRIBUSI SOAL", "BUAT NASKAH SOAL".
+- "Pratinjau Naskah & Kisi-Kisi Ujian", "NASKAH SOAL", "KUNCI JAWABAN", "KISI-KISI", "KARTU SOAL", "DOWNLOAD .DOC", "KUNCI EXCEL (ANALISIS SOAL)", "MEMPROSES BAGIAN 1 (PILIHAN GANDA)... BATCH 1 DARI 1", "PERINGATAN PENTING", "NASKAH SOAL UJIAN", "DOKUMEN RESMI KARTU SOAL (FORMAT KEMENDIKBUDRISTEK)", "DOWNLOAD KARTU SOAL (.DOC)", "CETAK KARTU", "TAMPILAN: Semua Kartu (6) / Per Butir Soal", "KARTU SOAL NO. 1", "Tahun Pelajaran: 2026/2027", "CAPAIAN PEMBELAJARAN (CP) / KOMPETENSI DASAR (KD)", "MATERI POKOK", "LEVEL KOGNITIF", "INDIKATOR SOAL", "BUKU SUMBER / ACUAN", "RUMUSAN BUTIR SOAL", "KUNCI JAWABAN", "PEDOMAN PENSKORAN / BOBOT".
+- "Analisis Butir Soal (Classical Test Theory)", "Input Jawaban", "Hasil Analisis Butir (CTT)", "Analisis Nilai Siswa", "Cetak / PDF", "Export Excel", "Tambah Siswa", "Kunci Jawaban", "Template", "Import Excel", "Matriks Respon Siswa", "RELIABILITAS KR-20", "RATA-RATA NILAI", "STATUS BUTIR SOAL", "UKURAN SAMPEL", "REKOMENDASI: BUANG / REVISI / PERTAHANKAN", "Daya Pembeda", "Tingkat Kesulitan", "Distribusi Pemilih & Analisis Pengecoh", "KUNCI".
+- "Analisis Nilai & Ketuntasan Belajar Siswa", "KRITERIA KETUNTASAN MINIMAL (KKM / KTP)", "RATA-RATA KELAS", "RENTANG NILAI (MIN/MAX)", "STANDAR DEVIASI", "KETUNTASAN KLASIKAL", "PERLU REMEDIAL KLASIKAL", "Distribusi Nilai Siswa", "Daftar Nilai & Status Ketuntasan Siswa", "TUNTAS", "BELUM TUNTAS", "REMEDIAL", "MATERI KRITIS", "CUKUP", "Rekomendasi Tindak Lanjut & Kelompok Remedial".
+- "Persiapan Mode Kuis Interaktif", "MODE QUIZ INTERAKTIF", "DAFTAR SOAL SIAP KUIS", "MULAI KUIS INTERAKTIF", "SOAL 1 DARI 6", "Selanjutnya", "Buat Ulang Gambar", "Hapus Gambar", "Buat Soal Ulang".
+- "SIMULATOR TKA 2026", "JENJANG PENDIDIKAN", "SUBTES (MATA PELAJARAN)", "MODE JUMLAH SOAL & STANDAR KEMENDIKDASMEN", "Standar Resmi (30 Soal)", "Latihan (10 Soal)", "Mini Drill (5 Soal)", "BUAT SIMULASI BARU", "NASKAH SIMULASI TKA SIAP", "UNDUH WORD (.DOC)", "MULAI SIMULASI", "SEDANG MEMBUAT SIMULASI TKA (5 BUTIR SOAL)...".
+- Footer berulang: "© 2026 APSIS. HAK CIPTA DILINDUNGI UNDANG-UNDANG. | VERSION 1.0 (STABLE)".
+- Soal contoh: "Andi memiliki 3 apel. Budi memberinya 2 apel lagi. Berapa jumlah apel Andi sekarang?", "Di dalam sebuah kotak ada 4 bola merah dan 3 bola biru...", "Hasil dari 3 + 2 adalah…", "Berpakah hasil dari 4 + 4?", "Berpakah hasil dari 0 + 6?".
+- Nama siswa contoh: Vino Bastian, Intan Permata, Kirana Wulandari, Naufal Akbar, Umi Kalsum, Lutfi Hakim, Joko Susilo, Cinta Ayu Kusuma, Siti Nurhaliza, Putri Ayu Lestari, Aisyah Ramadhani, Ahmad Fauzan, Bagas Saputra, Dewi Angraini, dll.
+- Caption video (overlay, bukan UI): "APLIKASI PEMBUAT SOAL + KARTU SOAL, KISI KISI, KUNCI / ANALISIS BUTIR SOAL / ANALISIS NILAI / SEMUA BERES KURANG DARI 5 MENIT".
+
+## 6. FLOW ALUR PENGGUNA
+1. **Landing page (00:00)** → pengguna mengetahui fitur, menekan **"Masuk ke Aplikasi"** (00:16).
+2. **Isi identitas** (00:17–00:38): nama guru "Andika", satuan "SD 1 Depok", pilih Jenjang SD/MI → Fase A → Kelas 1, tulis Mapel "Matematika", Topik "Penjumlahan" → klik **"Lanjut ke Konfigurasi Teknis"**.
+3. **Konfigurasi struktur** (00:40–01:20): bentuk soal "Pilihan Ganda", opsi "ABC", aktifkan gambar, set kesulitan Mudah=3/Sedang=2/Sulit=1, pilih kognitif C1 & C2, **"+ Tambah ke Struktur"**, lewati custom instruction ("Saya tidak pakai instruksi"), muncul ringkasan BAGIAN 1 (total 6 soal) → klik **"Buat Naskah Soal"**.
+4. **Proses AI** (01:21–01:25): loading batch → naskah siap.
+5. **Review hasil** (01:26–02:13): cek tab Naskah Soal (6 soal + ilustrasi), Kunci Jawaban, Kisi-Kisi, Kartu Soal (per nomor 1–6); tombol download tersedia.
+6. **Analisis butir soal** (02:13–02:45): input/matriks jawaban 35 siswa → hasil KR-20 0.62, butir dinilai Baik/Revisi/Buang; buka Detail Butir #1 (rekomendasi buang) dan #2 (pertahankan).
+7. **Analisis nilai** (02:45–03:26): KKM 70, statistik kelas, distribusi nilai, daftar ketuntasan, daftar 16 siswa remedial, capaian per TP.
+8. **Kuis interaktif** (03:26–03:27): persiapan kuis → MULAI KUIS → jawab soal (jawaban benar disorot hijau) → Selanjutnya.
+9. **Simulasi TKA 2026** (03:28–03:58): pilih jenjang SD/MI Sederajat, subtes Literasi Bahasa Indonesia, mode Mini Drill (5 Soal) → buat simulasi → naskah siap → unduh Word / mulai simulasi, scroll soal literasi.
+10. **Kembali mereview** (03:58–04:49): kartu soal per butir, analisis nilai, matriks respons, dan detail butir lagi — video ditutup dengan ajakan CTA ("klik tombol PELAJARI SELENGKAPNYA / LEARN MORE").
+
+**Catatan replikasi:** seluruh interaksi ditampilkan sebagai *web app* responsif yang direkam dalam frame potret (ada area hitam atas-bawah video); layout utama satu kolom dengan sidebar alur yang muncul/dicolapse, semua data contoh (35 siswa, skor, statistik) adalah mock data demo.

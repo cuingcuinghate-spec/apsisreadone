@@ -1,0 +1,192 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-navy: var(--navy);
+  --color-apsis-amber: var(--apsis-amber);
+  --color-apsis-teal: var(--apsis-teal);
+  --color-apsis-mint: var(--apsis-mint);
+  --color-apsis-green: var(--apsis-green);
+}
+
+:root {
+  --radius: 0.75rem;
+  --apsis-teal: #0e5e56;
+  --apsis-teal-light: #14a085;
+  --apsis-mint: #e6f2ee;
+  --apsis-green: #2e7d5b;
+  --apsis-amber: #f59e0b;
+  --navy: #1e293b;
+  --background: #f7fbf9;
+  --foreground: #1a2e2a;
+  --card: #ffffff;
+  --card-foreground: #1a2e2a;
+  --popover: #ffffff;
+  --popover-foreground: #1a2e2a;
+  --primary: #0e5e56;
+  --primary-foreground: #ffffff;
+  --secondary: #e6f2ee;
+  --secondary-foreground: #0e5e56;
+  --muted: #eef5f2;
+  --muted-foreground: #5c7a72;
+  --accent: #e6f2ee;
+  --accent-foreground: #0e5e56;
+  --destructive: #dc2626;
+  --border: #dbe9e3;
+  --input: #cfe0d9;
+  --ring: #0e5e56;
+  --chart-1: #0e5e56;
+  --chart-2: #14a085;
+  --chart-3: #3b82f6;
+  --chart-4: #f59e0b;
+  --chart-5: #dc2626;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #1a2e2a;
+  --sidebar-primary: #0e5e56;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e6f2ee;
+  --sidebar-accent-foreground: #0e5e56;
+  --sidebar-border: #dbe9e3;
+  --sidebar-ring: #0e5e56;
+}
+
+.dark {
+  --background: #0c1b18;
+  --foreground: #e8f4ef;
+  --card: #10231f;
+  --card-foreground: #e8f4ef;
+  --popover: #10231f;
+  --popover-foreground: #e8f4ef;
+  --primary: #17a08a;
+  --primary-foreground: #06110f;
+  --secondary: #14332d;
+  --secondary-foreground: #e8f4ef;
+  --muted: #14332d;
+  --muted-foreground: #8fb3a9;
+  --accent: #14332d;
+  --accent-foreground: #e8f4ef;
+  --destructive: #ef4444;
+  --border: #1d3a34;
+  --input: #274b43;
+  --ring: #17a08a;
+  --chart-1: #17a08a;
+  --chart-2: #2ec4a5;
+  --chart-3: #60a5fa;
+  --chart-4: #fbbf24;
+  --chart-5: #f87171;
+  --sidebar: #10231f;
+  --sidebar-foreground: #e8f4ef;
+  --sidebar-primary: #17a08a;
+  --sidebar-primary-foreground: #06110f;
+  --sidebar-accent: #14332d;
+  --sidebar-accent-foreground: #e8f4ef;
+  --sidebar-border: #1d3a34;
+  --sidebar-ring: #17a08a;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* ====== Utilitas khusus APSIS ====== */
+
+.bg-app-gradient {
+  background: linear-gradient(180deg, #ffffff 0%, #f2faf7 45%, #eef7f3 100%);
+}
+
+.dark .bg-app-gradient {
+  background: linear-gradient(180deg, #0c1b18 0%, #0e211d 100%);
+}
+
+.bg-navy-btn {
+  background-color: #1e293b;
+  color: #ffffff;
+}
+.bg-navy-btn:hover {
+  background-color: #2b3a52;
+}
+
+.form-label {
+  @apply text-[11px] font-semibold uppercase tracking-wider text-muted-foreground;
+}
+
+.card-title-upper {
+  @apply text-sm font-bold uppercase tracking-wide text-primary;
+}
+
+/* Scrollbar halus */
+.nice-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.nice-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.nice-scroll::-webkit-scrollbar-thumb {
+  background: #c3d9d1;
+  border-radius: 8px;
+}
+.dark .nice-scroll::-webkit-scrollbar-thumb {
+  background: #274b43;
+}
+
+/* ====== Cetak / PDF ====== */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .print-area {
+    display: block !important;
+  }
+  body {
+    background: #ffffff !important;
+  }
+  .print-plain {
+    box-shadow: none !important;
+    border: none !important;
+  }
+}

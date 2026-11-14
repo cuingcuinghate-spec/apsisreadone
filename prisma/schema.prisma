@@ -1,0 +1,96 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Profil ujian yang dibuat guru (identitas & sasaran pembelajaran)
+model ExamProfile {
+  id          String   @id @default(cuid())
+  teacherName String
+  schoolName  String
+  level       String // Jenjang: SD/MI, SMP/MTs, ...
+  phase       String // Fase A/B/C/D/E/F
+  grade       String // Kelas 1, Kelas 2, ...
+  subject     String // Mata pelajaran
+  topic       String // Topik / lingkup capaian pembelajaran
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  structures Structure[]
+}
+
+// Bagian soal (struktur paket): BAGIAN 1, BAGIAN 2, dst.
+model Structure {
+  id                String   @id @default(cuid())
+  profileId         String
+  profile           ExamProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  label             String // "BAGIAN 1"
+  questionType      String // Pilihan Ganda, Pilihan Ganda Kompleks, Benar/Salah, Isian Singkat, Uraian
+  optionCount       Int      @default(3)
+  includeImages     Boolean  @default(false)
+  easyCount         Int      @default(0)
+  mediumCount       Int      @default(0)
+  hardCount         Int      @default(0)
+  total             Int      @default(0)
+  cognitiveLevels   String // JSON array string, e.g. '["C1","C2"]'
+  customInstruction String?
+  createdAt         DateTime @default(now())
+
+  questions Question[]
+}
+
+// Butir soal hasil generate AI
+model Question {
+  id            String  @id @default(cuid())
+  structureId   String
+  structure     Structure @relation(fields: [structureId], references: [id], onDelete: Cascade)
+  number        Int
+  type          String
+  difficulty    String // Mudah | Sedang | Sulit
+  cognitiveLevel String // C1..C6
+  content       String
+  options       String // JSON array string
+  answer        String // "A" | "B" | ...
+  indicator     String
+  material      String
+  source        String
+  scoreWeight   Int     @default(1)
+  imagePrompt   String?
+  imagePath     String?
+  createdAt     DateTime @default(now())
+
+  @@index([structureId])
+}
+
+// Simulasi TKA 2026 yang tersimpan
+model TkaSimulation {
+  id             String   @id @default(cuid())
+  level          String
+  subtest        String
+  mode           String // standar | latihan | drill
+  totalQuestions Int
+  data           String // JSON array of TkaQuestion
+  createdAt      DateTime @default(now())
+}
+
+// Konfigurasi modul analisis (dataset demo: kunci, jumlah soal, opsi, KKM, topik/TP)
+model AnalysisConfig {
+  id             String   @id @default("main")
+  totalQuestions Int      @default(10)
+  optionCount    Int      @default(3)
+  kkm            Int      @default(70)
+  keyAnswers     String // JSON array e.g. '["B","A","B",...]'
+  topics         String // JSON array e.g. '[{"label":"...","from":1,"to":5}]'
+  updatedAt      DateTime @updatedAt
+}
+
+// Siswa demo untuk analisis (id 1..35)
+model AnalysisStudent {
+  id      Int    @id
+  name    String
+  answers String // JSON array huruf e.g. '["B","A","-",...]'
+}

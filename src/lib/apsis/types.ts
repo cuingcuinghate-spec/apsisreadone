@@ -42,6 +42,8 @@ export interface QuestionData {
   scoreWeight: number
   imagePrompt: string | null
   imagePath: string | null
+  imageStatus: string
+  imageError: string | null
 }
 
 export interface TkaQuestionData {

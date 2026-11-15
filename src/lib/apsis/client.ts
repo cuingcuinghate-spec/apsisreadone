@@ -52,11 +52,17 @@ export const apsisApi = {
       method: 'POST',
       body: JSON.stringify({ profileId }),
     }),
-  generateImage: (questionId: string, prompt?: string) =>
-    fetchJson<{ question: QuestionData }>(`/api/questions/${questionId}/image`, {
-      method: 'POST',
-      body: JSON.stringify({ prompt: prompt ?? null }),
-    }),
+  // Ilustrasi AI berjalan sebagai background job: mulai job, lalu poll statusnya
+  // sampai 'done' atau 'error'. Ini menghindari 502 karena proses > 30 detik.
+  startImageJob: (questionId: string, prompt?: string) =>
+    fetchJson<{ started: boolean; status: string; question: QuestionData }>(
+      `/api/questions/${questionId}/image`,
+      { method: 'POST', body: JSON.stringify({ prompt: prompt ?? null }) }
+    ),
+  pollImageJob: (questionId: string) =>
+    fetchJson<{ status: string; error: string | null; question: QuestionData }>(
+      `/api/questions/${questionId}/image`
+    ),
   deleteImage: (questionId: string) =>
     fetchJson<{ question: QuestionData }>(`/api/questions/${questionId}/image`, { method: 'DELETE' }),
   regenerateQuestion: (questionId: string) =>

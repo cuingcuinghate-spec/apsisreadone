@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useApsisStore } from '@/lib/store'
 import { apsisApi } from '@/lib/apsis/client'
+import { runImageJobFlow } from '@/lib/apsis/image-job'
 import { useToast } from '@/hooks/use-toast'
 import { PageTitle, Chip, EmptyState } from '@/components/apsis/shared'
 import { Button } from '@/components/ui/button'
@@ -19,17 +20,23 @@ export default function KuisView() {
   const { toast } = useToast()
   const [mode, setMode] = useState<'prep' | 'quiz'>('prep')
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [imagePhase, setImagePhase] = useState<'composing' | 'rendering'>('composing')
 
   function updateQuestion(updated: QuestionData) {
     setQuestions(questions.map((q) => (q.id === updated.id ? updated : q)))
   }
 
   async function regenerateImage(q: QuestionData) {
+    if (busyId) return
     setBusyId(q.id)
+    setImagePhase('composing')
     try {
-      const { question } = await apsisApi.generateImage(q.id, q.imagePrompt ?? undefined)
-      updateQuestion(question)
-      toast({ title: `Gambar soal #${question.number} diperbarui` })
+      const updated = await runImageJobFlow(q.id, {
+        prompt: q.imagePrompt ?? undefined,
+        onPhase: setImagePhase,
+      })
+      updateQuestion(updated)
+      toast({ title: `Gambar soal #${updated.number} diperbarui` })
     } catch (err) {
       toast({
         title: 'Gagal membuat gambar',
@@ -166,7 +173,12 @@ export default function KuisView() {
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     {busy ? (
                       <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Memproses…
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />{' '}
+                        {busyId === q.id
+                          ? imagePhase === 'composing'
+                            ? 'Menyusun deskripsi ilustrasi…'
+                            : 'Menggambar ilustrasi AI…'
+                          : 'Memproses…'}
                       </span>
                     ) : null}
                     {withImage ? (
@@ -176,6 +188,7 @@ export default function KuisView() {
                           variant="outline"
                           className="h-7 gap-1 text-[11px]"
                           onClick={() => void regenerateImage(q)}
+                          disabled={busy}
                         >
                           <RefreshCw className="h-3 w-3" aria-hidden /> Buat Ulang Gambar
                         </Button>
@@ -185,6 +198,7 @@ export default function KuisView() {
                             variant="outline"
                             className="h-7 gap-1 text-[11px] text-destructive hover:text-destructive"
                             onClick={() => void removeImage(q)}
+                            disabled={busy}
                           >
                             <ImageOff className="h-3 w-3" aria-hidden /> Hapus Gambar
                           </Button>

@@ -61,6 +61,8 @@ model Question {
   scoreWeight   Int     @default(1)
   imagePrompt   String?
   imagePath     String?
+  imageStatus   String  @default("idle") // idle | composing | rendering | done | error
+  imageError    String?
   createdAt     DateTime @default(now())
 
   @@index([structureId])

@@ -15,6 +15,20 @@ import { db } from '@/lib/db'
 export type NewQuestion = Omit<QuestionData, 'id' | 'structureId'>
 type ZAIClient = Awaited<ReturnType<typeof ZAI.create>>
 
+function extractJsonObject(text: string): Record<string, unknown> | null {
+  if (!text) return null
+  const cleaned = text.replace(/```(?:json)?/gi, '').trim()
+  const first = cleaned.indexOf('{')
+  const last = cleaned.lastIndexOf('}')
+  if (first === -1 || last === -1 || last <= first) return null
+  try {
+    const parsed = JSON.parse(cleaned.slice(first, last + 1))
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
+}
+
 // ---------- ZAI instance cache ----------
 // File .z-ai-config dapat ditulis ulang oleh sistem (mis. token diperbarui).
 // Cache di-invalidate berdasarkan mtime config agar token selalu fresh.
@@ -54,13 +68,26 @@ export function resetZAICache(): void {
   zaiConfigSig = null
 }
 
+const NO_TEXT_SUFFIX =
+  ' Absolutely no text, no letters, no numbers, no Chinese characters, no captions, no labels, no watermark, no signature.'
+
+export function withNoTextGuard(prompt: string): string {
+  const clean = prompt.trim()
+  if (/no text/i.test(clean)) {
+    // Prompt sudah memuat larangan teks — pastikan klausul bahasa Cina ikut ada
+    return /Chinese characters/i.test(clean) ? clean : `${clean.replace(/\.$/, '')}. No Chinese characters.`
+  }
+  return `${clean.replace(/\.$/, '')}.${NO_TEXT_SUFFIX}`
+}
+
 // ---------- Image generation dengan retry otomatis saat error auth (401) ----------
 export async function generateImage(prompt: string, size = '1024x1024'): Promise<string> {
+  const guardedPrompt = withNoTextGuard(prompt)
   let lastError: unknown = null
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     try {
       const zai = await getZAI()
-      const res = await zai.images.generations.create({ prompt, size })
+      const res = await zai.images.generations.create({ prompt: guardedPrompt, size })
       const b64 = res?.data?.[0]?.base64
       if (!b64) throw new Error('Image generation returned no data')
       return b64
@@ -69,7 +96,7 @@ export async function generateImage(prompt: string, size = '1024x1024'): Promise
       const msg = String(err?.message ?? err)
       const isAuthError = /status 401|missing x-token|unauthorized|forbidden/i.test(msg)
       const isTransient = /status 4[02]9|status 5\d\d|timeout|econn|network|fetch failed/i.test(msg)
-      if ((isAuthError || isTransient) && attempt < 2) {
+      if ((isAuthError || isTransient) && attempt < 3) {
         if (isAuthError) {
           // Token mungkin sudah dirotasi — paksa baca ulang config lalu coba lagi
           console.warn('[generateImage] auth error, refreshing ZAI config and retrying...')
@@ -77,7 +104,7 @@ export async function generateImage(prompt: string, size = '1024x1024'): Promise
         } else {
           console.warn(`[generateImage] transient error (attempt ${attempt + 1}), retrying...`)
         }
-        await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)))
+        await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)))
         continue
       }
       throw err
@@ -697,9 +724,218 @@ export async function generateTkaQuestions(level: string, subtest: string, count
   return out
 }
 
-// ---------- 7. buildImageAutoPrompt ----------
+// ---------- 7. buildImageAutoPrompt (heuristic fallback) ----------
+// Kaya & terstruktur: subjek dari materi/soal, gaya sesuai jenjang, komposisi,
+// batasan anti-teks (teks buatan AI mudah kacau), kualitas cetak.
 export function buildImageAutoPrompt(question: QuestionData, profile: ExamProfileData): string {
-  return `Ilustrasi kartun pendidikan anak-anak untuk soal ${profile.subject} kelas ${profile.grade}: "${question.content.slice(0, 120)}". Gaya flat design cartoon ceria, warna cerah, tanpa teks dan tanpa angka, latar putih bersih.`
+  const grade = parseInt(String(profile.grade ?? '').replace(/\D+/g, ''), 10)
+  const isPrimary = !Number.isNaN(grade) && grade <= 6
+  const isJunior = !Number.isNaN(grade) && grade >= 7 && grade <= 9
+  const style = isPrimary
+    ? 'cheerful flat vector cartoon illustration for children, thick clean outlines, bright friendly colors, rounded shapes'
+    : isJunior
+      ? 'modern flat vector educational infographic illustration, clean semi-detailed style, harmonious color palette'
+      : 'clean flat vector diagram illustration, professional academic infographic style, muted professional colors'
+
+  const material = (question.material || profile.topic || '').trim()
+  const content = question.content.replace(/\s+/g, ' ').trim().slice(0, 200)
+  const cognitive = (question.cognitiveLevel || 'C2').toUpperCase()
+  const isHigherOrder = /^[C4-C6]|C[4-6]/.test(cognitive)
+
+  const sceneHint = isHigherOrder
+    ? `a comparative scene or visual puzzle about "${material}" that encourages analysis`
+    : `a clear single-scene depiction of "${material}"`
+
+  return [
+    `Educational textbook illustration for a school exam, ${sceneHint}.`,
+    `Question context: "${content}".`,
+    `Subject matter: ${material} (${profile.subject}, ${profile.level || 'school'}, grade ${profile.grade}).`,
+    `Style: ${style}.`,
+    'Composition: single centered main subject with supporting details, generous margins, uncluttered background, plain pure white background, soft subtle ground shadow.',
+    'MUST NOT contain: any text, letters, numbers, words, labels, watermarks, signatures, or logos — images with garbled text are rejected.',
+    'High quality, crisp edges, print-ready, suitable for a formal exam paper.',
+  ].join(' ')
+}
+
+// ---------- 7b. composeImagePromptWithAI (kecerdasan penuh via LLM) ----------
+// LLM menganalisis isi soal lalu menyusun deskripsi visual yang tepat secara konsep:
+// objek apa yang harus muncul, aksinya, latar, dan gaya — bukan sekadar menyalin kalimat soal.
+export async function composeImagePromptWithAI(
+  question: QuestionData,
+  profile: ExamProfileData
+): Promise<string> {
+  const system = [
+    'You are an expert art director for educational exam illustrations in Indonesia.',
+    'You convert exam questions into a single vivid English image-generation prompt.',
+    'Rules:',
+    '1. Decide WHAT to draw: concrete, correctly-shaped visual objects that represent the concept being tested (e.g. for biotic vs abiotic: plants/animals/people vs rock/sun/water/wind).',
+    '2. If the question compares, groups, or categorizes, arrange objects into clearly separated zones (left/right or inside/outside) so the visual logic is instantly readable.',
+    '3. Match the grade level: elementary = cute cartoon storybook illustration with simple shapes; junior/senior = clean flat storybook illustration with moderate detail.',
+    '4. NEVER let the illustration contain any writing: no text, no letters, no numbers, no captions, no signs, no labels, no book pages with readable words, no speech bubbles. Image models often add unwanted captions (frequently in Chinese) — you must actively prevent this by describing a purely pictorial scene and ending the prompt with the exact clause: "Absolutely no text, no letters, no numbers, no Chinese characters, no captions, no labels, no watermark, no signature."',
+    '5. NEVER use the words infographic, diagram, chart, labeled, annotated, or typography in the prompt — they make the model draw text. Prefer purely pictorial wording like storybook scene, picture, illustration.',
+    '6. Keep it appropriate for a formal exam paper: single scene, plain white background, no violence, no religion, no politics.',
+    '7. Output ONLY JSON: {"prompt": "..."} where prompt is one English paragraph of 60-120 words covering subject, action, setting, style, composition, lighting, and the mandatory no-text clause from rule 4 at the end.',
+  ].join('\n')
+
+  const user = [
+    `Subject: ${profile.subject}`,
+    `Grade: ${profile.grade} (${profile.level || 'school'})`,
+    `Topic/Material: ${question.material || profile.topic}`,
+    `Cognitive level: ${question.cognitiveLevel}`,
+    `Question: ${question.content.slice(0, 400)}`,
+    question.options.length > 0 ? `Answer options: ${question.options.slice(0, 6).join(' | ')}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  const raw = await callLLM(system, user, 1)
+  if (raw) {
+    const obj = extractJsonObject(raw)
+    const prompt = typeof obj?.prompt === 'string' ? obj.prompt.trim() : ''
+    if (prompt.length >= 30) return prompt
+    // Fallback: LLM balas teks polos berisi prompt
+    const plain = raw.trim().replace(/^```(?:json)?|```$/g, '').trim()
+    if (plain.length >= 30 && plain.length <= 900 && !plain.startsWith('{')) return plain
+  }
+  // Fallback terakhir: heuristic builder yang sudah ditingkatkan
+  return buildImageAutoPrompt(question, profile)
+}
+
+// ---------- 7c. QA otomatis: deteksi teks pada gambar via VLM ----------
+// Model gambar sering menambahkan keterangan teks (seringnya huruf Cina) meskipun
+// prompt melarang. QA ini mendeteksi dan memicu regenerasi otomatis.
+async function imageContainsText(b64: string): Promise<boolean> {
+  try {
+    const zai = await getZAI()
+    const body = {
+      messages: [
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'text' as const,
+              text: 'Look at this illustration carefully. Does it contain ANY visible text such as letters, numbers, words, captions, labels, or characters from any language (including Chinese)? Ignore pictorial elements like drawings of objects. Answer ONLY with JSON: {"hasText": true} or {"hasText": false}',
+            },
+            { type: 'image_url' as const, image_url: { url: `data:image/png;base64,${b64}` } },
+          ],
+        },
+      ],
+      thinking: { type: 'disabled' as const },
+    }
+    const completion = await zai.chat.completions.createVision(
+      body as unknown as Parameters<typeof zai.chat.completions.createVision>[0]
+    )
+    const raw = completion?.choices?.[0]?.message?.content
+    const text =
+      typeof raw === 'string'
+        ? raw
+        : Array.isArray(raw)
+          ? raw.map((p: any) => p?.text ?? '').join('')
+          : ''
+    const obj = extractJsonObject(text)
+    if (obj && typeof obj.hasText === 'boolean') return obj.hasText
+    return /hasText"\s*:\s*true/i.test(text)
+  } catch (err) {
+    console.warn('[imageQA] pemeriksaan VLM gagal, lewati:', err)
+    return false // jangan blokir alur bila QA gagal
+  }
+}
+
+// ---------- 7d. Background image job runner ----------
+// Pembuatan gambar butuh 30-90 detik; gateway akan memutus request HTTP yang
+// terlalu lama (502). Karena itu pekerjaan berjalan di background dan statusnya
+// disimpan di DB (Question.imageStatus) agar frontend bisa polling.
+const runningImageJobs = new Map<string, Promise<void>>()
+
+async function runImageJob(questionId: string, customPrompt: string | null): Promise<void> {
+  try {
+    const row = await db.question.findUnique({
+      where: { id: questionId },
+      include: { structure: { include: { profile: true } } },
+    })
+    if (!row) throw new Error('Soal tidak ditemukan')
+
+    const profile: ExamProfileData = { ...row.structure.profile }
+    const question = parseQuestionRow(row)
+
+    // Fase 1 — susun prompt (custom prompt dari guru dipakai apa adanya)
+    await db.question.update({
+      where: { id: questionId },
+      data: { imageStatus: 'composing', imageError: null },
+    })
+    const prompt = customPrompt || (await composeImagePromptWithAI(question, profile))
+
+    // Fase 2 — render gambar (retry internal menangani 401/5xx/timeout)
+    await db.question.update({
+      where: { id: questionId },
+      data: { imageStatus: 'rendering', imagePrompt: prompt },
+    })
+    let b64 = await generateImage(prompt, '1152x864')
+
+    // Fase 3 — QA otomatis: bila gambar memuat teks, regenerasi (maks 2x)
+    for (let qa = 0; qa < 2; qa++) {
+      const hasText = await imageContainsText(b64)
+      if (!hasText) break
+      console.warn(`[imageJob] teks terdeteksi pada gambar soal ${questionId}, regenerasi (${qa + 1})...`)
+      b64 = await generateImage(prompt, '1152x864')
+    }
+
+    const buffer = Buffer.from(b64, 'base64')
+    const dir = path.join(process.cwd(), 'public', 'generated')
+    await fsp.mkdir(dir, { recursive: true })
+    const filename = `${questionId}-${Date.now()}.png`
+    await fsp.writeFile(path.join(dir, filename), buffer)
+
+    // Hapus file lama setelah file baru berhasil ditulis
+    if (row.imagePath) {
+      try {
+        await fsp.rm(path.join(process.cwd(), 'public', row.imagePath))
+      } catch {
+        // abaikan jika file lama sudah tidak ada
+      }
+    }
+
+    await db.question.update({
+      where: { id: questionId },
+      data: {
+        imagePrompt: prompt,
+        imagePath: `/generated/${filename}`,
+        imageStatus: 'done',
+        imageError: null,
+      },
+    })
+    console.log(`[imageJob] soal ${questionId} selesai — /generated/${filename}`)
+  } catch (err: any) {
+    const message = String(err?.message ?? err)
+    console.error(`[imageJob] soal ${questionId} gagal:`, message)
+    try {
+      await db.question.update({
+        where: { id: questionId },
+        data: { imageStatus: 'error', imageError: message.slice(0, 500) },
+      })
+    } catch (dbErr) {
+      console.error('[imageJob] gagal menyimpan status error:', dbErr)
+    }
+  }
+}
+
+export function startImageJob(questionId: string, customPrompt: string | null): 'started' | 'already-running' {
+  if (runningImageJobs.has(questionId)) return 'already-running'
+  const task = runImageJob(questionId, customPrompt)
+    .catch(() => {}) // error sudah dicatat di DB oleh runImageJob
+    .finally(() => runningImageJobs.delete(questionId))
+  runningImageJobs.set(questionId, task)
+  return 'started'
+}
+
+export function isImageJobRunning(questionId: string): boolean {
+  return runningImageJobs.has(questionId)
+}
+
+export async function getImageJobState(questionId: string): Promise<QuestionData | null> {
+  const row = await db.question.findUnique({ where: { id: questionId } })
+  if (!row) return null
+  return parseQuestionRow(row)
 }
 
 // ---------- Row parsers (Prisma -> Data types) ----------
@@ -743,6 +979,8 @@ export function parseQuestionRow(row: {
   scoreWeight: number
   imagePrompt: string | null
   imagePath: string | null
+  imageStatus?: string
+  imageError?: string | null
 }): QuestionData {
   let options: string[] = []
   try {
@@ -751,7 +989,12 @@ export function parseQuestionRow(row: {
   } catch {
     options = []
   }
-  return { ...row, options }
+  return {
+    ...row,
+    options,
+    imageStatus: row.imageStatus ?? (row.imagePath ? 'done' : 'idle'),
+    imageError: row.imageError ?? null,
+  }
 }
 
 export function parseTkaSimulationRow(row: {

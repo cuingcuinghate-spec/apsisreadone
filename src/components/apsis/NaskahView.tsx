@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import { useApsisStore } from '@/lib/store'
 import { apsisApi } from '@/lib/apsis/client'
+import { runImageJobFlow, type ImageJobPhase } from '@/lib/apsis/image-job'
 import { SCHOOL_YEAR } from '@/lib/apsis/constants'
 import { useToast } from '@/hooks/use-toast'
 import { PageTitle, SectionCard, Chip, EmptyState } from '@/components/apsis/shared'
@@ -42,15 +43,20 @@ function QuestionImageBlock({ question }: { question: QuestionData }) {
   const questions = useApsisStore((s) => s.questions)
   const profile = useApsisStore((s) => s.profile)
   const { toast } = useToast()
-  const [busy, setBusy] = useState(false)
+  const [phase, setPhase] = useState<ImageJobPhase | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [promptDraft, setPromptDraft] = useState('')
+  const busy = phase !== null
 
   async function generate(prompt?: string) {
-    if (!profile) return
-    setBusy(true)
+    if (!profile || busy) return
+    setPhase('composing')
     try {
-      const { question: updated } = await apsisApi.generateImage(question.id, prompt)
+      const updated = await runImageJobFlow(question.id, {
+        prompt,
+        onPhase: (p) => setPhase(p),
+      })
       setQuestions(questions.map((q) => (q.id === updated.id ? updated : q)))
       toast({ title: `Gambar soal #${updated.number} siap` })
     } catch (err) {
@@ -60,12 +66,12 @@ function QuestionImageBlock({ question }: { question: QuestionData }) {
         variant: 'destructive',
       })
     } finally {
-      setBusy(false)
+      setPhase(null)
     }
   }
 
   async function removeImage() {
-    setBusy(true)
+    setDeleting(true)
     try {
       const { question: updated } = await apsisApi.deleteImage(question.id)
       setQuestions(questions.map((q) => (q.id === updated.id ? updated : q)))
@@ -77,7 +83,7 @@ function QuestionImageBlock({ question }: { question: QuestionData }) {
         variant: 'destructive',
       })
     } finally {
-      setBusy(false)
+      setDeleting(false)
     }
   }
 
@@ -87,7 +93,10 @@ function QuestionImageBlock({ question }: { question: QuestionData }) {
         <div className="flex h-44 w-full max-w-xs items-center justify-center rounded-lg border border-dashed bg-muted/50">
           <div className="text-center">
             <Loader2 className="mx-auto h-6 w-6 animate-spin text-primary" aria-hidden />
-            <p className="mt-2 text-xs font-semibold text-muted-foreground">Membuat ilustrasi AI…</p>
+            <p className="mt-2 text-xs font-semibold text-muted-foreground">
+              {phase === 'composing' ? 'Menyusun deskripsi ilustrasi…' : 'Menggambar ilustrasi AI…'}
+            </p>
+            <p className="mt-1 text-[10px] text-muted-foreground">Biasanya 30–60 detik</p>
           </div>
         </div>
       ) : question.imagePath ? (
@@ -109,6 +118,7 @@ function QuestionImageBlock({ question }: { question: QuestionData }) {
               setPromptDraft(question.imagePrompt ?? '')
               setEditOpen(true)
             }}
+            disabled={busy || deleting}
           >
             <Pencil className="h-3 w-3" aria-hidden /> EDIT PROMPT
           </Button>
@@ -119,7 +129,7 @@ function QuestionImageBlock({ question }: { question: QuestionData }) {
           size="sm"
           className="h-7 gap-1 text-[11px]"
           onClick={() => generate(question.imagePrompt ?? undefined)}
-          disabled={busy}
+          disabled={busy || deleting}
         >
           <RefreshCw className="h-3 w-3" aria-hidden /> {question.imagePath ? 'BUAT ULANG' : 'BUAT GAMBAR'}
         </Button>
@@ -130,9 +140,9 @@ function QuestionImageBlock({ question }: { question: QuestionData }) {
             size="sm"
             className="h-7 gap-1 text-[11px] text-destructive hover:text-destructive"
             onClick={removeImage}
-            disabled={busy}
+            disabled={busy || deleting}
           >
-            <ImageOff className="h-3 w-3" aria-hidden /> HAPUS
+            <ImageOff className="h-3 w-3" aria-hidden /> {deleting ? 'MENGHAPUS…' : 'HAPUS'}
           </Button>
         ) : null}
       </div>

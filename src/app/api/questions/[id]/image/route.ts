@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server'
 import { promises as fs } from 'fs'
 import path from 'path'
 import { db } from '@/lib/db'
-import { getZAI, buildImageAutoPrompt, parseQuestionRow } from '@/lib/apsis/generation'
+import { generateImage, buildImageAutoPrompt, parseQuestionRow } from '@/lib/apsis/generation'
 import type { ExamProfileData } from '@/lib/apsis/types'
 
 export const dynamic = 'force-dynamic'
@@ -32,12 +32,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const customPrompt = typeof body?.prompt === 'string' ? body.prompt.trim() : ''
     const prompt = customPrompt || buildImageAutoPrompt(question, profile)
 
-    const zai = await getZAI()
-    const res = await zai.images.generations.create({ prompt, size: '1024x1024' })
-    const b64 = res?.data?.[0]?.base64
-    if (!b64) {
-      throw new Error('Image generation returned no data')
-    }
+    const b64 = await generateImage(prompt, '1024x1024')
 
     const buffer = Buffer.from(b64, 'base64')
     const dir = path.join(process.cwd(), 'public', 'generated')

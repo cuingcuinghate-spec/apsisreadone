@@ -1,5 +1,8 @@
 // ============ Server-only helpers untuk generate soal (LLM + fallback) ============
 import ZAI from 'z-ai-web-dev-sdk'
+import { promises as fsp } from 'fs'
+import path from 'path'
+import os from 'os'
 import type {
   ExamProfileData,
   StructureData,
@@ -13,13 +16,74 @@ export type NewQuestion = Omit<QuestionData, 'id' | 'structureId'>
 type ZAIClient = Awaited<ReturnType<typeof ZAI.create>>
 
 // ---------- ZAI instance cache ----------
+// File .z-ai-config dapat ditulis ulang oleh sistem (mis. token diperbarui).
+// Cache di-invalidate berdasarkan mtime config agar token selalu fresh.
+const CONFIG_PATHS = [
+  path.join(process.cwd(), '.z-ai-config'),
+  path.join(os.homedir(), '.z-ai-config'),
+  '/etc/.z-ai-config',
+]
+
 let zaiInstance: ZAIClient | null = null
+let zaiConfigSig: string | null = null
+
+async function readConfigSignature(): Promise<string> {
+  const parts: string[] = []
+  for (const p of CONFIG_PATHS) {
+    try {
+      const st = await fsp.stat(p)
+      parts.push(`${p}:${st.mtimeMs}`)
+    } catch {
+      parts.push(`${p}:-`)
+    }
+  }
+  return parts.join('|')
+}
 
 export async function getZAI(): Promise<ZAIClient> {
-  if (!zaiInstance) {
+  const sig = await readConfigSignature()
+  if (!zaiInstance || sig !== zaiConfigSig) {
     zaiInstance = await ZAI.create()
+    zaiConfigSig = sig
   }
   return zaiInstance
+}
+
+export function resetZAICache(): void {
+  zaiInstance = null
+  zaiConfigSig = null
+}
+
+// ---------- Image generation dengan retry otomatis saat error auth (401) ----------
+export async function generateImage(prompt: string, size = '1024x1024'): Promise<string> {
+  let lastError: unknown = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const zai = await getZAI()
+      const res = await zai.images.generations.create({ prompt, size })
+      const b64 = res?.data?.[0]?.base64
+      if (!b64) throw new Error('Image generation returned no data')
+      return b64
+    } catch (err: any) {
+      lastError = err
+      const msg = String(err?.message ?? err)
+      const isAuthError = /status 401|missing x-token|unauthorized|forbidden/i.test(msg)
+      const isTransient = /status 4[02]9|status 5\d\d|timeout|econn|network|fetch failed/i.test(msg)
+      if ((isAuthError || isTransient) && attempt < 2) {
+        if (isAuthError) {
+          // Token mungkin sudah dirotasi — paksa baca ulang config lalu coba lagi
+          console.warn('[generateImage] auth error, refreshing ZAI config and retrying...')
+          resetZAICache()
+        } else {
+          console.warn(`[generateImage] transient error (attempt ${attempt + 1}), retrying...`)
+        }
+        await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)))
+        continue
+      }
+      throw err
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError))
 }
 
 // ---------- 1. extractJsonArray ----------

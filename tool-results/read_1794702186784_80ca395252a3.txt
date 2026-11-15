@@ -1,0 +1,719 @@
+     1→// ============ Server-only helpers untuk generate soal (LLM + fallback) ============
+     2→import ZAI from 'z-ai-web-dev-sdk'
+     3→import type {
+     4→  ExamProfileData,
+     5→  StructureData,
+     6→  QuestionData,
+     7→  TkaQuestionData,
+     8→  TkaSimulationData,
+     9→} from './types'
+    10→import { db } from '@/lib/db'
+    11→
+    12→export type NewQuestion = Omit<QuestionData, 'id' | 'structureId'>
+    13→type ZAIClient = Awaited<ReturnType<typeof ZAI.create>>
+    14→
+    15→// ---------- ZAI instance cache ----------
+    16→let zaiInstance: ZAIClient | null = null
+    17→
+    18→export async function getZAI(): Promise<ZAIClient> {
+    19→  if (!zaiInstance) {
+    20→    zaiInstance = await ZAI.create()
+    21→  }
+    22→  return zaiInstance
+    23→}
+    24→
+    25→// ---------- 1. extractJsonArray ----------
+    26→export function extractJsonArray(text: string): any[] | null {
+    27→  if (!text) return null
+    28→  // Strip markdown fences (```json ... ``` or ``` ... ```)
+    29→  let cleaned = text.trim()
+    30→  cleaned = cleaned.replace(/```(?:json)?/gi, '')
+    31→  const first = cleaned.indexOf('[')
+    32→  const last = cleaned.lastIndexOf(']')
+    33→  if (first === -1 || last === -1 || last <= first) return null
+    34→  try {
+    35→    const parsed = JSON.parse(cleaned.slice(first, last + 1))
+    36→    return Array.isArray(parsed) ? parsed : null
+    37→  } catch {
+    38→    return null
+    39→  }
+    40→}
+    41→
+    42→// ---------- 2. callLLM ----------
+    43→export async function callLLM(system: string, user: string, retries = 2): Promise<string | null> {
+    44→  for (let attempt = 0; attempt <= retries; attempt++) {
+    45→    try {
+    46→      const zai = await getZAI()
+    47→      const completion = await zai.chat.completions.create({
+    48→        messages: [
+    49→          { role: 'system', content: system },
+    50→          { role: 'user', content: user },
+    51→        ],
+    52→        thinking: { type: 'disabled' },
+    53→      })
+    54→      const raw = completion?.choices?.[0]?.message?.content
+    55→      let text: string | null = null
+    56→      if (typeof raw === 'string') {
+    57→        text = raw
+    58→      } else if (Array.isArray(raw)) {
+    59→        text = raw.map((part: any) => (typeof part === 'string' ? part : part?.text ?? '')).join('')
+    60→      }
+    61→      if (text && text.trim().length > 0) return text
+    62→      console.warn(`[callLLM] attempt ${attempt + 1}: empty content`)
+    63→    } catch (err) {
+    64→      console.error(`[callLLM] attempt ${attempt + 1} error:`, err)
+    65→    }
+    66→    if (attempt < retries) {
+    67→      await new Promise((resolve) => setTimeout(resolve, 1000))
+    68→    }
+    69→  }
+    70→  console.error('[callLLM] final failure after retries')
+    71→  return null
+    72→}
+    73→
+    74→// ---------- Shared prompt fragments ----------
+    75→const SYSTEM_PROMPT =
+    76→  'Anda adalah penyusun soal ujian profesional Indonesia yang mengikuti Kurikulum Merdeka dan prinsip asesmen Kemendikbudristek. Balas HANYA dengan JSON array valid tanpa teks lain.'
+    77→
+    78→const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']
+    79→
+    80→function questionTypeFlags(questionType: string) {
+    81→  const t = (questionType || '').toLowerCase()
+    82→  return {
+    83→    isPG: t.includes('pilihan ganda'),
+    84→    isComplex: t.includes('kompleks'),
+    85→    isBS: t.includes('benar') || t.includes('salah'),
+    86→    isShort: t.includes('isian'),
+    87→    isEssay: t.includes('uraian'),
+    88→  }
+    89→}
+    90→
+    91→function stripOptionPrefix(opt: string): string {
+    92→  let s = String(opt ?? '').trim()
+    93→  const stripped = s.replace(/^[A-Ja-j][.)]\s+/, '')
+    94→  if (stripped.trim().length > 0) s = stripped
+    95→  return s
+    96→}
+    97→
+    98→function normalizeAnswerLetter(answer: any, optionCount: number): string | null {
+    99→  const raw = String(answer ?? '').trim().toUpperCase()
+   100→  if (!raw) return null
+   101→  const firstLetter = raw.match(/[A-J]/)
+   102→  if (!firstLetter) return null
+   103→  const letter = firstLetter[0]
+   104→  const idx = LETTERS.indexOf(letter)
+   105→  if (idx === -1 || idx >= optionCount) return null
+   106→  return letter
+   107→}
+   108→
+   109→function normalizeAnswerLetters(answer: any, optionCount: number): string | null {
+   110→  const raw = String(answer ?? '').trim().toUpperCase()
+   111→  if (!raw) return null
+   112→  const letters = raw.match(/[A-J]/g) ?? []
+   113→  const valid = Array.from(new Set(letters)).filter((l) => LETTERS.indexOf(l) < optionCount)
+   114→  if (valid.length === 0) return null
+   115→  return valid.join(',')
+   116→}
+   117→
+   118→// ---------- Difficulty & cognitive helpers ----------
+   119→function difficultySequence(structure: StructureData): string[] {
+   120→  const seq: string[] = []
+   121→  for (let i = 0; i < structure.easyCount; i++) seq.push('Mudah')
+   122→  for (let i = 0; i < structure.mediumCount; i++) seq.push('Sedang')
+   123→  for (let i = 0; i < structure.hardCount; i++) seq.push('Sulit')
+   124→  const total = structure.total > 0 ? structure.total : seq.length
+   125→  while (seq.length < total) seq.push('Sedang')
+   126→  return seq.slice(0, total)
+   127→}
+   128→
+   129→function cognitiveAt(structure: StructureData, index: number): string {
+   130→  const levels = structure.cognitiveLevels && structure.cognitiveLevels.length > 0 ? structure.cognitiveLevels : ['C1']
+   131→  return levels[index % levels.length]
+   132→}
+   133→
+   134→// ---------- 4. fallbackQuestions ----------
+   135→export function fallbackQuestionAt(
+   136→  profile: ExamProfileData,
+   137→  structure: StructureData,
+   138→  index: number,
+   139→  difficulty: string,
+   140→  cognitiveLevel: string,
+   141→  number: number
+   142→): NewQuestion {
+   143→  const { isPG, isComplex, isBS, isShort, isEssay } = questionTypeFlags(structure.questionType)
+   144→  const isMath = /matematika/i.test(profile.subject || '')
+   145→  const indicator = `Siswa mampu menyelesaikan soal tentang ${profile.topic}`
+   146→  const material = profile.topic
+   147→  const source = 'Buku Siswa Kurikulum Merdeka'
+   148→  const base = { number, type: structure.questionType, difficulty, cognitiveLevel, indicator, material, source, scoreWeight: 1, imagePrompt: null, imagePath: null }
+   149→
+   150→  if (isMath) {
+   151→    const a = 2 + ((index * 7) % 8)
+   152→    const b = 1 + ((index * 5) % 9)
+   153→    const usePlus = index % 2 === 0
+   154→    let aa = a
+   155→    let bb = b
+   156→    if (!usePlus && bb > aa) {
+   157→      const tmp = aa
+   158→      aa = bb
+   159→      bb = tmp
+   160→    }
+   161→    const op = usePlus ? '+' : '-'
+   162→    const correct = usePlus ? aa + bb : aa - bb
+   163→    const story = index % 3 !== 0
+   164→    const items = ['apel', 'buku', 'kelereng']
+   165→    const names = ['Andi', 'Budi', 'Citra']
+   166→    const item = items[index % 3]
+   167→    const name = names[index % 3]
+   168→    const storyContent = `${name} memiliki ${aa} ${item}. Kemudian ${usePlus ? `ditambah ${bb}` : `dikurangi ${bb}`}. Berapa hasil akhirnya?`
+   169→    const plainContent = `Hasil dari ${aa} ${op} ${bb} adalah…`
+   170→
+   171→    if (isBS) {
+   172→      const claimed = correct + (index % 2 === 0 ? 0 : 1 + (index % 3))
+   173→      const content = `Perhatikan pernyataan berikut: "Hasil dari ${aa} ${op} ${bb} adalah ${claimed}." Pernyataan tersebut benar atau salah?`
+   174→      return { ...base, content, options: ['Benar', 'Salah'], answer: claimed === correct ? 'A' : 'B' }
+   175→    }
+   176→
+   177→    if (isShort || isEssay) {
+   178→      const content = isEssay ? storyContent : plainContent
+   179→      const answer = isEssay
+   180→        ? `${correct}, karena ${aa} ${usePlus ? 'ditambah' : 'dikurangi'} ${bb} menghasilkan ${correct}.`
+   181→        : String(correct)
+   182→      return { ...base, content, options: [], answer }
+   183→    }
+   184→
+   185→    // PG / PG Kompleks
+   186→    const content = story ? storyContent : plainContent
+   187→    const correctPos = Math.min(index % 3, Math.max(structure.optionCount - 1, 0))
+   188→    const deltas = [-1, 1, 2, -2, 3, -3, 4]
+   189→    const distractors: string[] = []
+   190→    for (const d of deltas) {
+   191→      if (distractors.length >= structure.optionCount - 1) break
+   192→      const v = correct + d
+   193→      if (v >= 0 && v !== correct && !distractors.includes(String(v))) distractors.push(String(v))
+   194→    }
+   195→    const options: string[] = []
+   196→    let dIdx = 0
+   197→    for (let k = 0; k < structure.optionCount; k++) {
+   198→      if (k === correctPos) {
+   199→        options.push(String(correct))
+   200→      } else {
+   201→        options.push(distractors[dIdx % distractors.length])
+   202→        dIdx++
+   203→      }
+   204→    }
+   205→    const answer = isComplex ? LETTERS[correctPos] : LETTERS[correctPos]
+   206→    return { ...base, content, options, answer }
+   207→  }
+   208→
+   209→  // Generic (non-matematika)
+   210→  if (isBS) {
+   211→    const positive = index % 2 === 0
+   212→    const content = positive
+   213→      ? `Pernyataan: "Konsep ${profile.topic} termasuk materi penting yang dipelajari dalam ${profile.subject} di ${profile.grade}." Pernyataan tersebut benar atau salah?`
+   214→      : `Pernyataan: "${profile.topic} sama sekali tidak memiliki kaitan dengan materi ${profile.subject}." Pernyataan tersebut benar atau salah?`
+   215→    return { ...base, content, options: ['Benar', 'Salah'], answer: positive ? 'A' : 'B' }
+   216→  }
+   217→
+   218→  if (isShort || isEssay) {
+   219→    const content = `Jelaskan dengan singkat konsep ${profile.topic} (${index + 1})${isEssay ? ' beserta satu contohnya' : ''}.`
+   220→    const answer = isEssay
+   221→      ? `Jawaban model: siswa menjelaskan pengertian ${profile.topic} dan memberikan satu contoh relevan dalam kehidupan sehari-hari.`
+   222→      : `${profile.topic} merupakan konsep dalam ${profile.subject} yang mencakup pemahaman, penerapan, dan contoh nyata di kehidupan sehari-hari.`
+   223→    return { ...base, content, options: [], answer }
+   224→  }
+   225→
+   226→  // PG / PG Kompleks
+   227→  const genericOptions = ['Pernyataan yang tepat', 'Pernyataan kurang tepat', 'Tidak relevan']
+   228→  while (genericOptions.length < structure.optionCount) {
+   229→    genericOptions.push(`Pernyataan tidak dapat diterima (${genericOptions.length})`)
+   230→  }
+   231→  return {
+   232→    ...base,
+   233→    content: `Pilih pernyataan yang paling tepat mengenai konsep ${profile.topic} (soal ${index + 1}).`,
+   234→    options: genericOptions.slice(0, structure.optionCount),
+   235→    answer: 'A',
+   236→  }
+   237→}
+   238→
+   239→export function fallbackQuestions(profile: ExamProfileData, structure: StructureData, startNumber: number): NewQuestion[] {
+   240→  const difficulties = difficultySequence(structure)
+   241→  const total = structure.total > 0 ? structure.total : difficulties.length
+   242→  const out: NewQuestion[] = []
+   243→  for (let i = 0; i < total; i++) {
+   244→    out.push(fallbackQuestionAt(profile, structure, i, difficulties[i], cognitiveAt(structure, i), startNumber + i))
+   245→  }
+   246→  return out
+   247→}
+   248→
+   249→// ---------- 3. generateQuestionsForStructure ----------
+   250→function sanitizeLLMQuestion(
+   251→  raw: any,
+   252→  profile: ExamProfileData,
+   253→  structure: StructureData,
+   254→  difficulty: string,
+   255→  cognitiveLevel: string,
+   256→  number: number
+   257→): NewQuestion | null {
+   258→  const { isPG, isComplex, isBS, isShort, isEssay } = questionTypeFlags(structure.questionType)
+   259→  const content = String(raw?.content ?? '').trim()
+   260→  if (!content) return null
+   261→
+   262→  let options: string[] = []
+   263→  let answer = ''
+   264→
+   265→  if (isBS) {
+   266→    options = ['Benar', 'Salah']
+   267→    const ans = String(raw?.answer ?? '').trim().toLowerCase()
+   268→    if (ans.includes('benar') || (ans.startsWith('a') && !ans.includes('benar') && !ans.includes('salah'))) answer = 'A'
+   269→    else if (ans.includes('salah') || ans.startsWith('b')) answer = 'B'
+   270→    else return null
+   271→  } else if (isPG) {
+   272→    if (!Array.isArray(raw?.options)) return null
+   273→    options = raw.options.map(stripOptionPrefix).filter((o: string) => o.length > 0)
+   274→    if (options.length > structure.optionCount) options = options.slice(0, structure.optionCount)
+   275→    if (options.length !== structure.optionCount) return null
+   276→    const normalized = isComplex
+   277→      ? normalizeAnswerLetters(raw?.answer, structure.optionCount)
+   278→      : normalizeAnswerLetter(raw?.answer, structure.optionCount)
+   279→    if (!normalized) return null
+   280→    answer = normalized
+   281→  } else if (isShort || isEssay) {
+   282→    options = []
+   283→    answer = String(raw?.answer ?? '').trim()
+   284→    if (!answer) return null
+   285→  } else {
+   286→    // Unknown type: treat as short answer
+   287→    options = []
+   288→    answer = String(raw?.answer ?? '').trim()
+   289→    if (!answer) return null
+   290→  }
+   291→
+   292→  const indicator = String(raw?.indicator ?? '').trim() || `Siswa mampu menyelesaikan soal tentang ${profile.topic}`
+   293→  const material = String(raw?.material ?? '').trim() || profile.topic
+   294→  const source = String(raw?.source ?? '').trim() || 'Buku Siswa Kurikulum Merdeka'
+   295→
+   296→  return {
+   297→    number,
+   298→    type: structure.questionType,
+   299→    difficulty,
+   300→    cognitiveLevel,
+   301→    content,
+   302→    options,
+   303→    answer,
+   304→    indicator,
+   305→    material,
+   306→    source,
+   307→    scoreWeight: 1,
+   308→    imagePrompt: null,
+   309→    imagePath: null,
+   310→  }
+   311→}
+   312→
+   313→export async function generateQuestionsForStructure(
+   314→  profile: ExamProfileData,
+   315→  structure: StructureData,
+   316→  startNumber: number
+   317→): Promise<NewQuestion[]> {
+   318→  const difficulties = difficultySequence(structure)
+   319→  const total = structure.total > 0 ? structure.total : difficulties.length
+   320→  const CHUNK_SIZE = 6
+   321→  const out: NewQuestion[] = []
+   322→
+   323→  for (let chunkStart = 0; chunkStart < total; chunkStart += CHUNK_SIZE) {
+   324→    const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, total)
+   325→    const chunkIndexes: number[] = []
+   326→    for (let i = chunkStart; i < chunkEnd; i++) chunkIndexes.push(i)
+   327→
+   328→    const levels = structure.cognitiveLevels && structure.cognitiveLevels.length > 0 ? structure.cognitiveLevels.join(', ') : 'C1'
+   329→    const chunkDifficulties = chunkIndexes.map((i) => difficulties[i]).join(', ')
+   330→
+   331→    const userPrompt = [
+   332→      `Buat soal ujian dengan konteks berikut: jenjang ${profile.level}, fase ${profile.phase}, kelas ${profile.grade}, mata pelajaran ${profile.subject}, topik "${profile.topic}".`,
+   333→      `Bentuk soal: ${structure.questionType} dengan ${structure.optionCount} opsi (untuk Pilihan Ganda / Pilihan Ganda Kompleks).`,
+   334→      structure.customInstruction ? `Instruksi tambahan dari guru: ${structure.customInstruction}` : '',
+   335→      `Buat ${chunkIndexes.length} soal dengan spesifikasi per soal (array JSON objects): {"content": string (teks soal jelas sesuai tingkat kelas), "options": array ${structure.optionCount} string TANPA huruf prefix (HANYA untuk bentuk pilihan ganda; untuk "Benar/Salah" gunakan ["Benar","Salah"]; untuk "Isian Singkat"/"Uraian" gunakan []), "answer": huruf kunci (A/B/C/...) untuk pilihan ganda, atau jawaban model singkat untuk isian/uraian, atau "A" (Benar) / "B" (Salah) untuk Benar/Salah, "indicator": string indikator soal, "material": string materi pokok, "source": string buku sumber/acuan}.`,
+   336→      `Tingkat kesulitan untuk ${chunkIndexes.length} soal ini (berurutan): ${chunkDifficulties}.`,
+   337→      `Soal harus variatif, kontekstual, sesuai kognitif ${levels}, dan tidak saling mirip. Balas HANYA JSON array.`,
+   338→    ]
+   339→      .filter(Boolean)
+   340→      .join('\n')
+   341→
+   342→    console.log(`[generate] chunk ${chunkStart}-${chunkEnd - 1} (${chunkIndexes.length} soal) dari ${total} — memanggil LLM...`)
+   343→    const text = await callLLM(SYSTEM_PROMPT, userPrompt, 2)
+   344→    const parsed = text ? extractJsonArray(text) : null
+   345→
+   346→    if (!parsed) {
+   347→      console.warn(`[generate] chunk ${chunkStart}-${chunkEnd - 1}: LLM gagal/parse gagal → menggunakan fallback template`)
+   348→    }
+   349→
+   350→    for (let k = 0; k < chunkIndexes.length; k++) {
+   351→      const i = chunkIndexes[k]
+   352→      const number = startNumber + i
+   353→      const difficulty = difficulties[i]
+   354→      const cognitiveLevel = cognitiveAt(structure, i)
+   355→      let question: NewQuestion | null = null
+   356→      if (parsed && parsed[k]) {
+   357→        question = sanitizeLLMQuestion(parsed[k], profile, structure, difficulty, cognitiveLevel, number)
+   358→      }
+   359→      if (!question) {
+   360→        question = fallbackQuestionAt(profile, structure, i, difficulty, cognitiveLevel, number)
+   361→      }
+   362→      out.push(question)
+   363→    }
+   364→    console.log(`[generate] chunk ${chunkStart}-${chunkEnd - 1} selesai (total soal sejauh ini: ${out.length})`)
+   365→  }
+   366→
+   367→  return out
+   368→}
+   369→
+   370→// ---------- 5. regenerateQuestion ----------
+   371→export async function regenerateQuestion(
+   372→  profile: ExamProfileData,
+   373→  structure: StructureData,
+   374→  question: QuestionData
+   375→): Promise<{ content: string; options: string[]; answer: string; indicator: string; material: string; source: string }> {
+   376→  const { isPG, isComplex, isBS, isShort, isEssay } = questionTypeFlags(structure.questionType)
+   377→  const levels = structure.cognitiveLevels && structure.cognitiveLevels.length > 0 ? structure.cognitiveLevels.join(', ') : 'C1'
+   378→
+   379→  const optionRule = isBS
+   380→    ? '"options": ["Benar","Salah"], "answer": "A" (Benar) atau "B" (Salah)'
+   381→    : isPG
+   382→      ? `"options": array ${structure.optionCount} string TANPA huruf prefix, "answer": huruf kunci (${isComplex ? 'boleh beberapa huruf dipisah koma' : 'satu huruf A/B/C/...'})`
+   383→      : isShort || isEssay
+   384→        ? '"options": [], "answer": jawaban model singkat'
+   385→        : '"options": [], "answer": jawaban model singkat'
+   386→
+   387→  const userPrompt = [
+   388→    `Buat SOAL BARU yang berbeda dari soal sebelumnya berikut ini (jangan menyalin isi soal lama).`,
+   389→    `Soal lama: "${question.content.slice(0, 400)}"`,
+   390→    `Konteks: jenjang ${profile.level}, fase ${profile.phase}, kelas ${profile.grade}, mata pelajaran ${profile.subject}, topik "${profile.topic}".`,
+   391→    `Bentuk soal: ${structure.questionType} dengan ${structure.optionCount} opsi (untuk Pilihan Ganda / Pilihan Ganda Kompleks). Tingkat kesulitan: ${question.difficulty}. Level kognitif: ${question.cognitiveLevel} dari ${levels}.`,
+   392→    structure.customInstruction ? `Instruksi tambahan dari guru: ${structure.customInstruction}` : '',
+   393→    `Balas dengan JSON array yang berisi SATU object soal dengan spesifikasi: {"content": string, ${optionRule}, "indicator": string indikator soal, "material": string materi pokok, "source": string buku sumber/acuan}. Soal harus variatif dan kontekstual. Balas HANYA JSON array.`,
+   394→  ]
+   395→    .filter(Boolean)
+   396→    .join('\n')
+   397→
+   398→  console.log(`[regenerate] soal nomor ${question.number} — memanggil LLM...`)
+   399→  const text = await callLLM(SYSTEM_PROMPT, userPrompt, 2)
+   400→  const parsed = text ? extractJsonArray(text) : null
+   401→  const raw = parsed && parsed.length > 0 ? parsed[0] : null
+   402→
+   403→  if (raw) {
+   404→    const sanitized = sanitizeLLMQuestion(
+   405→      raw,
+   406→      profile,
+   407→      { ...structure, total: 1 },
+   408→      question.difficulty,
+   409→      question.cognitiveLevel,
+   410→      question.number
+   411→    )
+   412→    if (sanitized) {
+   413→      console.log(`[regenerate] soal nomor ${question.number}: LLM OK`)
+   414→      return {
+   415→        content: sanitized.content,
+   416→        options: sanitized.options,
+   417→        answer: sanitized.answer,
+   418→        indicator: sanitized.indicator,
+   419→        material: sanitized.material,
+   420→        source: sanitized.source,
+   421→      }
+   422→    }
+   423→  }
+   424→
+   425→  console.warn(`[regenerate] soal nomor ${question.number}: LLM gagal/tidak valid → fallback template variant`)
+   426→  const variant = fallbackQuestionAt(
+   427→    profile,
+   428→    structure,
+   429→    question.number * 2 + 1,
+   430→    question.difficulty,
+   431→    question.cognitiveLevel,
+   432→    question.number
+   433→  )
+   434→  return {
+   435→    content: variant.content,
+   436→    options: variant.options,
+   437→    answer: variant.answer,
+   438→    indicator: variant.indicator,
+   439→    material: variant.material,
+   440→    source: variant.source,
+   441→  }
+   442→}
+   443→
+   444→// ---------- 6. generateTkaQuestions ----------
+   445→const TKA_SYSTEM_PROMPT = SYSTEM_PROMPT
+   446→
+   447→const TKA_THEMES = [
+   448→  'budaya Indonesia (tenun ikat / batik)',
+   449→  'kesehatan masyarakat (demam berdarah)',
+   450→  'lingkungan (pengelolaan sampah / kebakaran hutan)',
+   451→  'teknologi (media digital / aplikasi)',
+   452→  'ekonomi sederhana (warung / UMKM)',
+   453→]
+   454→
+   455→interface TkaFallbackSet {
+   456→  stimulus: string
+   457→  content: string
+   458→  options: string[]
+   459→  answer: string
+   460→  cognitiveLevel: string
+   461→  difficulty: string
+   462→}
+   463→
+   464→const TKA_FALLBACK_SETS: TkaFallbackSet[] = [
+   465→  {
+   466→    // Literasi 1: tenun ikat
+   467→    stimulus:
+   468→      'Di Pulau Sumba, Nusa Tenggara Timur, tenun ikat atau hinggi bukan sekadar kain, melainkan simbol status sosial dan penghubung dunia manusia dengan leluhur. Motif-motif seperti kuda, ayam, dan tengkorak manusia ditenun memakai pewarna alami dari akar mengkudu dan daun indigo. Prosesnya panjang: benang dipilin, dicelup, dirancang motifnya dengan teknik ikat, lalu ditenun berhari-hari di alat tenun bukan mesin. Seorang penenun ahli bisa menyelesaikan satu kain ritual dalam waktu hingga satu bulan. Kini generasi muda mulai meninggalkan tradisi ini karena waktu panjang dan hasil ekonomi yang tak selalu sepadan. Untunglah, sejumlah komunitas di Waingapu menghidupkan kembali minat lewat pelatihan penenunan bagi pemuda dan pemasaran daring. Kain hinggi kini juga tampil di ajang fashion nasional dengan sentuhan desain modern. Pemerintah daerah pun menetapkan tenun ikat sebagai warisan budaya takbenda yang wajib dilindungi. Meski demikian, para tetua masih mengingatkan bahwa makna ritual setiap motif tidak boleh dikorbankan demi pasar.',
+   469→    content: 'Berdasarkan stimulus tersebut, simpulan yang paling tepat tentang keberlanjutan tradisi tenun ikat Sumba adalah…',
+   470→    options: [
+   471→      'tradisi bertahan karena disokong pelatihan pemuda, pemasaran baru, dan pengakuan resmi tanpa meninggalkan makna ritualnya.',
+   472→      'tradisi itu sudah punah sejak generasi muda meninggalkan desa.',
+   473→      'motif ritual kini sepenuhnya diganti motif komersial agar laku di pasar.',
+   474→      'pemerintah melarang penjualan kain hinggi ke luar Pulau Sumba.',
+   475→    ],
+   476→    answer: 'A',
+   477→    cognitiveLevel: 'C5',
+   478→    difficulty: 'Sedang',
+   479→  },
+   480→  {
+   481→    // Literasi 2: demam berdarah
+   482→    stimulus:
+   483→      'Musim hingga membawa berkah bagi petani, tetapi juga membawa risiko. Rumah Sakit Umum Daerah Kota Baru mencatat lonjakan pasien demam berdarah dengue sebesar dua kali lipat dibanding bulan lalu. Kepala Dinas Kesehatan menjelaskan bahwa genangan air di ban bekas, pot gentong, dan saluran tersumbat menjadi tempat berkembang biak Aedes aegypti. Petugas jumantik berkeliling memeriksa akumulasi air dan mengecat bak muatan nyamuk, tetapi keberhasilannya bergantung pada kebiasaan warga. Keluarga dengan anak di bawah lima diminta memasang kelambu, memakai repellent, dan mengadakan gerbong rumah setiap Jumat. Di beberapa sekolah, murid diajak menanam tanaman pengusir nyamuk seperti lavender dan serai wangi di halaman. Kepala puskesmas menegaskan bahwa kematian bisa dicegah bila pengobatan dimulai pada hari kedua atau ketiga demam. Masyarakat diimbau tidak panik, namun tetap waspada, terutama bila anak menunjukkan tanda perdarahan seperti mimisan atau bintik merah pada kulit.',
+   484→    content: 'Manakah pernyataan yang paling sesuai dengan isi stimulus tersebut?',
+   485→    options: [
+   486→      'keberhasilan pemberantasan sarang nyamuk lebih ditentukan oleh kebiasaan warga daripada kerja petugas semata.',
+   487→      'vaksin demam berdarah sudah dibagikan gratis kepada seluruh warga Kota Baru.',
+   488→      'demam berdarah hanya menyerang keluarga yang tinggal di kawasan padat.',
+   489→      'pengobatan bisa ditunda hingga hari kelima tanpa risiko apa pun.',
+   490→    ],
+   491→    answer: 'A',
+   492→    cognitiveLevel: 'C4',
+   493→    difficulty: 'Sedang',
+   494→  },
+   495→  {
+   496→    // Literasi 3: semut rangging
+   497→    stimulus:
+   498→      'Legenda Semut Rangging berasal dari Kutai, Kalimantan Timur, dan diwariskan secara turun-temurun melalui cerita lisan. Konon, semut rangging adalah semut merah kecil yang gigih: walau badannya mungil, ia mampu memindahkan daun besar seorang diri demi sarangnya. Dalam hikayat, seekor semut rangging menantang buaya raksasa yang meneror penghuni hutan. Dengan kecerdikan, semut itu menyuruh para buaya berbaris melintasi muara dan menghitung jumlah mereka, lalu mengaku bahwa anak buahnya di daratan jauh lebih banyak. Buaya yang takut akhirnya pergi meninggalkan muara. Cerita ini sering dipakai para tetua Dayak untuk menanamkan nilai kerja keras, kecerdikan, dan keberanian menghadapi kekuatan besar. Kini legenda itu juga muncul dalam buku cerita anak bergambar dan pertunjukan teater sekolah. Para guru memanfaatkan kisah itu untuk mengajarkan bahwa ukuran bukan penentu kemenangan; strategi dan kekompakan justru sering menjadi penentu.',
+   499→    content: 'Nilai kehidupan yang paling menonjol dari legenda Semut Rangging dan alasan pemanfaatannya di sekolah adalah…',
+   500→    options: [
+   501→      'kerja keras, kecerdikan, dan keberanian — karena kisahnya menunjukkan yang kecil pun dapat menang lewat strategi dan kekompakan.',
+   502→      'kesombongan — karena semut berhasil menakuti buaya hingga lari.',
+   503→      'kepatuhan mutlak — karena buaya menuruti semua perintah semut.',
+   504→      'kekayaan — karena semut memperoleh harta dari buaya.',
+   505→    ],
+   506→    answer: 'A',
+   507→    cognitiveLevel: 'C5',
+   508→    difficulty: 'Sulit',
+   509→  },
+   510→  {
+   511→    // Numerasi 1: data penjualan
+   512→    stimulus:
+   513→      'Bu Ratna menjalankan warung kelontong di tepi pasar Desa Sukamaju. Selama satu pekan, ia mencatat penjualan tiga produk utamanya. Senin sampai Kamis, penjualan kopi sachet naik stabil: 20, 24, 28, lalu 32 bungkus per hari. Jumat turun menjadi 25 bungkus karena banyak pembeli memilih menabung menjelang akhir pekan, lalu Sabtu melonjak ke 40 bungkus dan Minggu 45 bungkus ketika pasar ramai. Untuk gula pasir, penjualannya cukup rata, sekitar 15 kg setiap hari, kecuali Minggu yang mencapai 22 kg. Minyak goreng justru paling ramai di awal bulan: pada pekan ini penjualannya 10 kg per hari, kecuali Senin yang mencapai 18 kg karena tepat hari gajian. Bu Ratna berencana menghitung rata-rata penjualan tiap produk untuk menentukan stok awal pekan depan. Ia juga membandingkan total penjualan akhir pekan (Sabtu-Minggu) dengan hari kerja agar tahu kapan harus menambah tenaga bantu.',
+   514→    content: 'Berdasarkan data pada stimulus, selisih rata-rata penjualan kopi sachet pada hari kerja (Senin-Jumat) dan akhir pekan (Sabtu-Minggu) adalah…',
+   515→    options: [
+   516→      '6 bungkus, dengan rata-rata akhir pekan lebih tinggi.',
+   517→      '6 bungkus, dengan rata-rata hari kerja lebih tinggi.',
+   518→      '9 bungkus, dengan rata-rata akhir pekan lebih tinggi.',
+   519→      '4 bungkus, dengan rata-rata hari kerja lebih tinggi.',
+   520→    ],
+   521→    answer: 'A',
+   522→    cognitiveLevel: 'C4',
+   523→    difficulty: 'Sedang',
+   524→  },
+   525→  {
+   526→    // Numerasi 2: tangga stadium
+   527→    stimulus:
+   528→      'Stadion Cendrawasih memiliki tribun timur dengan susunan tangga berbentuk pola. Undakan pertama dari lapangan memiliki 3 langkah dari pintu masuk bawah, dan setiap baris di atasnya bertambah 4 langkah dari baris sebelumnya. Jadi baris pertama memerlukan 3 langkah, baris kedua 7 langkah, baris ketiga 11 langkah, dan seterusnya. Panitia pertandingan ingin memasang papan petunjuk jarak tempuh di setiap blok. Seorang petugas menghitung berapa total langkah yang ditempuh penonton di blok A yang terdiri atas 8 baris terbawah jika penonton harus mendaki sampai baris ke-8. Sementara itu, di tribun barat polanya berbeda: baris pertama 2 langkah dan bertambah 3 langkah setiap baris, dengan total 10 baris. Panitia juga menyiapkan tangga darurat bagi penyandang disabilitas sehingga penonton cukup menempuh setengah jumlah langkah baris yang dituju.',
+   529→    content: 'Berdasarkan stimulus tersebut, total langkah untuk mencapai baris ke-8 di tribun timur (baris pertama 3 langkah, tiap baris berikutnya +4) adalah…',
+   530→    options: [
+   531→      '31 langkah.',
+   532→      '32 langkah.',
+   533→      '28 langkah.',
+   534→      '35 langkah.',
+   535→    ],
+   536→    answer: 'A',
+   537→    cognitiveLevel: 'C4',
+   538→    difficulty: 'Sulit',
+   539→  },
+   540→  {
+   541→    // Numerasi 3: bensin
+   542→    stimulus:
+   543→      'Pak Harun adalah pengemudi angkutan desa dengan rute tetap sepanjang 36 km sekali jalan. Setiap pagi ia bolak-balik rute itu dua kali untuk mengantar penumpang pertama dan kedua. Motor tangki miliknya berkapasitas 4 liter dan konsumsi bensin rata-rata 1 liter untuk setiap 12 km. Harga bensin di pom desa Rp10.000 per liter, sedangkan di SPBU kota lebih murah Rp2.000 per liter, tetapi jarak ke SPBU 9 km sekali jalan sehingga tetap memerlukan bensin untuk menuju ke sana. Pak Harun mengisi penuh tangki setiap Senin pagi di pom desa dan menghitung berapa hari anggaran Rp60.000 per pekan cukup. Ia juga mempertimbangkan pindah mengisi ke SPBU dua kali seminggu. Anaknya membuatkan catatan sederhana: total kilometer tempuh per hari dikali konsumsi, lalu dikali harga, agar bapaknya mudah membandingkan dua pilihan pengisian itu.',
+   544→    content: 'Berdasarkan stimulus, bensin yang dibutuhkan Pak Harun untuk seluruh perjalanan sehari (dua kali bolak-balik rute 36 km) adalah…',
+   545→    options: [
+   546→      '12 liter.',
+   547→      '6 liter.',
+   548→      '9 liter.',
+   549→      '15 liter.',
+   550→    ],
+   551→    answer: 'A',
+   552→    cognitiveLevel: 'C4',
+   553→    difficulty: 'Sedang',
+   554→  },
+   555→]
+   556→
+   557→function rotateTkaSet(set: TkaFallbackSet, variant: number): TkaQuestionData {
+   558→  const n = set.options.length
+   559→  const s = ((variant % n) + n) % n
+   560→  const rotated = set.options.map((_, k) => set.options[(k - s + n) % n])
+   561→  const answerIdx = LETTERS.indexOf(set.answer)
+   562→  const newAnswerIdx = (answerIdx + s) % n
+   563→  const leads = ['Berdasarkan stimulus tersebut, ', 'Berdasarkan teks di atas, ', 'Berdasarkan bacaan tersebut, ']
+   564→  let content = set.content
+   565→  if (variant > 0 && !content.toLowerCase().startsWith('berdasarkan')) {
+   566→    content = leads[variant % leads.length] + content.charAt(0).toLowerCase() + content.slice(1)
+   567→  }
+   568→  return {
+   569→    stimulus: set.stimulus,
+   570→    content,
+   571→    options: rotated,
+   572→    answer: LETTERS[newAnswerIdx],
+   573→    cognitiveLevel: set.cognitiveLevel,
+   574→    difficulty: set.difficulty,
+   575→  }
+   576→}
+   577→
+   578→export function fallbackTkaQuestionAt(subtest: string, index: number): TkaQuestionData {
+   579→  const isLiterasi = /literasi|bahasa/i.test(subtest || '')
+   580→  const isNumerasi = /numerasi|matematika/i.test(subtest || '')
+   581→  const pool = isLiterasi ? [0, 1, 2] : isNumerasi ? [3, 4, 5] : [0, 1, 2, 3, 4, 5]
+   582→  const setIdx = pool[index % pool.length]
+   583→  const variant = Math.floor(index / pool.length)
+   584→  return rotateTkaSet(TKA_FALLBACK_SETS[setIdx], variant)
+   585→}
+   586→
+   587→export async function generateTkaQuestions(level: string, subtest: string, count: number): Promise<TkaQuestionData[]> {
+   588→  const CHUNK_SIZE = 5
+   589→  const out: TkaQuestionData[] = []
+   590→
+   591→  for (let chunkStart = 0; chunkStart < count; chunkStart += CHUNK_SIZE) {
+   592→    const chunkCount = Math.min(CHUNK_SIZE, count - chunkStart)
+   593→    const theme = TKA_THEMES[(chunkStart / CHUNK_SIZE) % TKA_THEMES.length]
+   594→
+   595→    const userPrompt = [
+   596→      `Buat ${chunkCount} soal standar Tes Kemampuan Akademik (TKA) Kemendikdasmen 2026 untuk jenjang ${level}, subtes ${subtest}.`,
+   597→      `Soal harus HOTS berbasis stimulus dengan tema konteks batch ini: ${theme}.`,
+   598→      `Setiap item adalah JSON object dengan spesifikasi: {"stimulus": string (120–200 kata; untuk Literasi Bahasa Indonesia: teks narasi/informasi menarik berita/tokoh/lingkungan/budaya Indonesia; untuk Numerasi/Matematika: konteks data/tabel naratif kehidupan nyata), "content": pertanyaan HOTS, "options": 4 opsi tanpa huruf, "answer": huruf kunci (A-D), "cognitiveLevel": "C4"|"C5"|"C6", "difficulty": "Sedang"|"Sulit"}.`,
+   599→      `Soal harus variatif dan tidak saling mirip. Balas HANYA JSON array.`,
+   600→    ].join('\n')
+   601→
+   602→    console.log(`[tka/generate] chunk ${chunkStart}-${chunkStart + chunkCount - 1} (${chunkCount} soal) tema: ${theme} — memanggil LLM...`)
+   603→    const text = await callLLM(TKA_SYSTEM_PROMPT, userPrompt, 2)
+   604→    const parsed = text ? extractJsonArray(text) : null
+   605→
+   606→    if (!parsed) {
+   607→      console.warn(`[tka/generate] chunk ${chunkStart}: LLM gagal/parse gagal → fallback template`)
+   608→    }
+   609→
+   610→    for (let k = 0; k < chunkCount; k++) {
+   611→      const index = chunkStart + k
+   612→      let item: TkaQuestionData | null = null
+   613→      const raw = parsed && parsed[k] ? parsed[k] : null
+   614→      if (raw) {
+   615→        const stimulus = String(raw?.stimulus ?? '').trim()
+   616→        const content = String(raw?.content ?? '').trim()
+   617→        const options = Array.isArray(raw?.options) ? raw.options.map(stripOptionPrefix).filter((o: string) => o.length > 0) : []
+   618→        const answer = normalizeAnswerLetter(raw?.answer, 4)
+   619→        const cognitiveLevel = ['C4', 'C5', 'C6'].includes(String(raw?.cognitiveLevel)) ? String(raw.cognitiveLevel) : 'C4'
+   620→        const difficulty = ['Sedang', 'Sulit'].includes(String(raw?.difficulty)) ? String(raw.difficulty) : 'Sedang'
+   621→        if (stimulus.length >= 30 && content && options.length === 4 && answer) {
+   622→          item = { stimulus, content, options, answer, cognitiveLevel, difficulty }
+   623→        }
+   624→      }
+   625→      if (!item) {
+   626→        item = fallbackTkaQuestionAt(subtest, index)
+   627→      }
+   628→      out.push(item)
+   629→    }
+   630→    console.log(`[tka/generate] chunk ${chunkStart} selesai (total soal sejauh ini: ${out.length})`)
+   631→  }
+   632→
+   633→  return out
+   634→}
+   635→
+   636→// ---------- 7. buildImageAutoPrompt ----------
+   637→export function buildImageAutoPrompt(question: QuestionData, profile: ExamProfileData): string {
+   638→  return `Ilustrasi kartun pendidikan anak-anak untuk soal ${profile.subject} kelas ${profile.grade}: "${question.content.slice(0, 120)}". Gaya flat design cartoon ceria, warna cerah, tanpa teks dan tanpa angka, latar putih bersih.`
+   639→}
+   640→
+   641→// ---------- Row parsers (Prisma -> Data types) ----------
+   642→export function parseStructureRow(row: {
+   643→  id: string
+   644→  profileId: string
+   645→  label: string
+   646→  questionType: string
+   647→  optionCount: number
+   648→  includeImages: boolean
+   649→  easyCount: number
+   650→  mediumCount: number
+   651→  hardCount: number
+   652→  total: number
+   653→  cognitiveLevels: string
+   654→  customInstruction: string | null
+   655→}): StructureData {
+   656→  let cognitiveLevels: string[] = []
+   657→  try {
+   658→    const parsed = JSON.parse(row.cognitiveLevels)
+   659→    if (Array.isArray(parsed)) cognitiveLevels = parsed.map(String)
+   660→  } catch {
+   661→    cognitiveLevels = []
+   662→  }
+   663→  return { ...row, cognitiveLevels }
+   664→}
+   665→
+   666→export function parseQuestionRow(row: {
+   667→  id: string
+   668→  structureId: string
+   669→  number: number
+   670→  type: string
+   671→  difficulty: string
+   672→  cognitiveLevel: string
+   673→  content: string
+   674→  options: string
+   675→  answer: string
+   676→  indicator: string
+   677→  material: string
+   678→  source: string
+   679→  scoreWeight: number
+   680→  imagePrompt: string | null
+   681→  imagePath: string | null
+   682→}): QuestionData {
+   683→  let options: string[] = []
+   684→  try {
+   685→    const parsed = JSON.parse(row.options)
+   686→    if (Array.isArray(parsed)) options = parsed.map(String)
+   687→  } catch {
+   688→    options = []
+   689→  }
+   690→  return { ...row, options }
+   691→}
+   692→
+   693→export function parseTkaSimulationRow(row: {
+   694→  id: string
+   695→  level: string
+   696→  subtest: string
+   697→  mode: string
+   698→  totalQuestions: number
+   699→  data: string
+   700→  createdAt: Date
+   701→}): TkaSimulationData {
+   702→  let questions: TkaQuestionData[] = []
+   703→  try {
+   704→    const parsed = JSON.parse(row.data)
+   705→    if (Array.isArray(parsed)) questions = parsed
+   706→  } catch {
+   707→    questions = []
+   708→  }
+   709→  return {
+   710→    id: row.id,
+   711→    level: row.level,
+   712→    subtest: row.subtest,
+   713→    mode: row.mode,
+   714→    totalQuestions: row.totalQuestions,
+   715→    questions,
+   716→    createdAt: row.createdAt?.toISOString(),
+   717→  }
+   718→}
+   719→

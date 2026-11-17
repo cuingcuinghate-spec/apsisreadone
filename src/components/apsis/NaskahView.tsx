@@ -128,7 +128,7 @@ function QuestionImageBlock({ question }: { question: QuestionData }) {
           variant="outline"
           size="sm"
           className="h-7 gap-1 text-[11px]"
-          onClick={() => generate(question.imagePrompt ?? undefined)}
+          onClick={() => generate(question.imagePath ? (question.imagePrompt ?? undefined) : undefined)}
           disabled={busy || deleting}
         >
           <RefreshCw className="h-3 w-3" aria-hidden /> {question.imagePath ? 'BUAT ULANG' : 'BUAT GAMBAR'}

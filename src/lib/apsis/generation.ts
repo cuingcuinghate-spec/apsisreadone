@@ -724,65 +724,136 @@ export async function generateTkaQuestions(level: string, subtest: string, count
   return out
 }
 
-// ---------- 7. buildImageAutoPrompt (heuristic fallback) ----------
-// Kaya & terstruktur: subjek dari materi/soal, gaya sesuai jenjang, komposisi,
-// batasan anti-teks (teks buatan AI mudah kacau), kualitas cetak.
+// ---------- 7. buildImageAutoPrompt (heuristic fallback, subject-aware) ----------
+// Fallback tanpa LLM: tetap memperhatikan mapel, jenjang, level kognitif,
+// dan kata kunci visual dari soal. Klausul anti-teks ditambahkan otomatis
+// oleh generateImage (withNoTextGuard), jadi tidak ditulis di sini.
+const ID_STOPWORDS = new Set([
+  'yang', 'dan', 'atau', 'dengan', 'untuk', 'adalah', 'ini', 'itu', 'sebuah',
+  'para', 'akan', 'telah', 'dapat', 'bisa', 'jika', 'maka', 'karena', 'agar',
+  'saat', 'ada', 'tidak', 'bukan', 'juga', 'oleh', 'sebagai', 'hanya', 'sangat',
+  'lebih', 'paling', 'banyak', 'semua', 'setiap', 'berikut', 'tersebut', 'gambar',
+  'the', 'and', 'or', 'of', 'to', 'in', 'on', 'with', 'for', 'is', 'are', 'a', 'an',
+])
+
+function pickVisualKeywords(question: QuestionData, max = 8): string {
+  const source = `${question.material || ''} ${question.content}`
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 3 && !ID_STOPWORDS.has(w))
+  const unique: string[] = []
+  for (const w of source) if (!unique.includes(w)) unique.push(w)
+  return unique.slice(0, max).join(', ')
+}
+
 export function buildImageAutoPrompt(question: QuestionData, profile: ExamProfileData): string {
   const grade = parseInt(String(profile.grade ?? '').replace(/\D+/g, ''), 10)
   const isPrimary = !Number.isNaN(grade) && grade <= 6
   const isJunior = !Number.isNaN(grade) && grade >= 7 && grade <= 9
   const style = isPrimary
-    ? 'cheerful flat vector cartoon illustration for children, thick clean outlines, bright friendly colors, rounded shapes'
+    ? 'cheerful flat vector storybook cartoon illustration for children, thick clean outlines, bright friendly colors, rounded shapes'
     : isJunior
-      ? 'modern flat vector educational infographic illustration, clean semi-detailed style, harmonious color palette'
-      : 'clean flat vector diagram illustration, professional academic infographic style, muted professional colors'
+      ? 'modern flat vector educational illustration, clean semi-detailed style, harmonious color palette'
+      : 'clean flat vector illustration, professional academic style, muted professional colors'
 
+  const subject = `${profile.subject} ${profile.level}`.toLowerCase()
   const material = (question.material || profile.topic || '').trim()
-  const content = question.content.replace(/\s+/g, ' ').trim().slice(0, 200)
+  const content = question.content.replace(/\s+/g, ' ').trim()
   const cognitive = (question.cognitiveLevel || 'C2').toUpperCase()
-  const isHigherOrder = /^[C4-C6]|C[4-6]/.test(cognitive)
+  const isHigherOrder = /C[4-6]/.test(cognitive)
 
-  const sceneHint = isHigherOrder
-    ? `a comparative scene or visual puzzle about "${material}" that encourages analysis`
-    : `a clear single-scene depiction of "${material}"`
+  // Arahkan scene sesuai karakter mapel agar objek yang digambar tepat konsep
+  let directive: string
+  if (/ipa|sains|science|biologi|fisika|kimia/.test(subject)) {
+    directive = `scientifically accurate depiction of "${material}" — organisms drawn with correct characteristic anatomy and colors, or clean everyday science objects`
+  } else if (/matematika|math/.test(subject)) {
+    directive = `real-world visualization of "${material}" using everyday objects and clean geometric forms (never relying on digits or equations)`
+  } else if (/ips|sosial|sejarah|geografi|ekonomi|pkn|kewarganegaraan/.test(subject)) {
+    directive = `realistic Indonesian everyday-life or landscape depiction of "${material}"`
+  } else if (/bahasa|sastra|indonesia|inggris|english/.test(subject)) {
+    directive = `clear narrative story scene of "${material}"`
+  } else {
+    directive = `one clear, instantly recognizable depiction of "${material}"`
+  }
+
+  const arrangement = isHigherOrder
+    ? 'a two-part comparative scene with clearly separated groups so the visual contrast is readable at a glance'
+    : 'one focused scene, a single main subject with a few supporting details'
+
+  const keywords = pickVisualKeywords(question)
 
   return [
-    `Educational textbook illustration for a school exam, ${sceneHint}.`,
-    `Question context: "${content}".`,
-    `Subject matter: ${material} (${profile.subject}, ${profile.level || 'school'}, grade ${profile.grade}).`,
+    `Educational illustration for a formal ${profile.level || 'school'} exam paper (${profile.subject}, grade ${profile.grade}): ${directive}.`,
+    keywords ? `Key visual elements: ${keywords}.` : '',
+    `Question context: "${content.slice(0, 180)}".`,
+    `Composition: ${arrangement}, plain pure white background, generous margins, uncluttered, soft ground shadow, soft even lighting.`,
     `Style: ${style}.`,
-    'Composition: single centered main subject with supporting details, generous margins, uncluttered background, plain pure white background, soft subtle ground shadow.',
-    'MUST NOT contain: any text, letters, numbers, words, labels, watermarks, signatures, or logos — images with garbled text are rejected.',
-    'High quality, crisp edges, print-ready, suitable for a formal exam paper.',
-  ].join(' ')
+    'Quality: crisp edges, correct proportions, distinct silhouettes, harmonious palette, print-ready.',
+  ]
+    .filter(Boolean)
+    .join(' ')
 }
 
-// ---------- 7b. composeImagePromptWithAI (kecerdasan penuh via LLM) ----------
-// LLM menganalisis isi soal lalu menyusun deskripsi visual yang tepat secara konsep:
-// objek apa yang harus muncul, aksinya, latar, dan gaya — bukan sekadar menyalin kalimat soal.
+// ---------- Prompt sanitizer: buang kata pemicu teks pada bagian deskriptif ----------
+// Model gambar cenderung menuliskan teks kacau bila prompt memuat kata-kata ini.
+// Klausa negatif resmi ditambahkan terpisah oleh withNoTextGuard.
+const BANNED_TEXT_WORDS =
+  /\b(infographics?|diagrams?|charts?|graphs?|labeled|labelled|labelling|labels?|annotated|annotations?|typography|captions?|subtitles?|letters?|numbers?|digits?|words?|texts?|textbook|writing|written|signs?|speech\s?bubbles?)\b/gi
+
+export function sanitizeImagePrompt(prompt: string): string {
+  let s = prompt.replace(/textbook/gi, 'educational')
+  s = s.replace(BANNED_TEXT_WORDS, ' ')
+  s = s
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,.;:])/g, '$1')
+    .replace(/,{2,}/g, ',')
+    .replace(/\s+\./g, '.')
+    .trim()
+  return s
+}
+
+// ---------- 7b. composeImagePromptWithAI (art director AI 2-tahap) ----------
+// LLM bekerja seperti art director profesional:
+//   Tahap 1 — menganalisis soal: konsep inti, objek visual wajib (dengan detail
+//             bentuk/warna/anatomi yang benar), tata letak, dan jebakan visual.
+//   Tahap 2 — menyusun prompt akhir yang setia pada analisis, bukan sekadar
+//             menyalin kalimat soal.
+// Hasil disanitasi dari kata pemicu teks, lalu guard anti-teks ditambah otomatis.
 export async function composeImagePromptWithAI(
   question: QuestionData,
   profile: ExamProfileData
 ): Promise<string> {
   const system = [
-    'You are an expert art director for educational exam illustrations in Indonesia.',
-    'You convert exam questions into a single vivid English image-generation prompt.',
-    'Rules:',
-    '1. Decide WHAT to draw: concrete, correctly-shaped visual objects that represent the concept being tested (e.g. for biotic vs abiotic: plants/animals/people vs rock/sun/water/wind).',
-    '2. If the question compares, groups, or categorizes, arrange objects into clearly separated zones (left/right or inside/outside) so the visual logic is instantly readable.',
-    '3. Match the grade level: elementary = cute cartoon storybook illustration with simple shapes; junior/senior = clean flat storybook illustration with moderate detail.',
-    '4. NEVER let the illustration contain any writing: no text, no letters, no numbers, no captions, no signs, no labels, no book pages with readable words, no speech bubbles. Image models often add unwanted captions (frequently in Chinese) — you must actively prevent this by describing a purely pictorial scene and ending the prompt with the exact clause: "Absolutely no text, no letters, no numbers, no Chinese characters, no captions, no labels, no watermark, no signature."',
-    '5. NEVER use the words infographic, diagram, chart, labeled, annotated, or typography in the prompt — they make the model draw text. Prefer purely pictorial wording like storybook scene, picture, illustration.',
-    '6. Keep it appropriate for a formal exam paper: single scene, plain white background, no violence, no religion, no politics.',
-    '7. Output ONLY JSON: {"prompt": "..."} where prompt is one English paragraph of 60-120 words covering subject, action, setting, style, composition, lighting, and the mandatory no-text clause from rule 4 at the end.',
+    'You are a senior art director and visual-pedagogy expert who designs illustrations for Indonesian school exam papers (Kurikulum Merdeka).',
+    'TASK: read the exam question below and design ONE single-scene illustration that genuinely helps students answer it. Work in two steps, then output a single JSON object.',
+    'STEP 1 - analyze and fill these JSON fields:',
+    '  "coreConcept": one sentence stating exactly what concept or skill the question tests.',
+    '  "objects": 2-6 concrete visual objects that MUST appear; each {"name":"...","visual":"precise English description with correct shape, size, color and details","reason":"why it matters for this question"}.',
+    '  "layout": how the objects are arranged (zones, grouping, foreground/background, relative sizes).',
+    '  "pitfalls": 1-4 concrete mistakes a careless illustrator could make here.',
+    'STEP 2 - write "prompt": one English paragraph of 80-150 words for an image model that faithfully renders your analysis:',
+    '  - Open with the illustration type, then describe the full scene using every object from "objects" with its visual details, correct proportions, and distinct colors/silhouettes.',
+    '  - Include the arrangement from "layout", the setting, soft even lighting, and a style matched to grade: grade 1-6 = cheerful flat vector storybook cartoon, rounded shapes, bright friendly colors; grade 7-9 = modern flat vector illustration, moderate detail; grade 10-12 = clean flat vector illustration, muted professional colors.',
+    '  - Use Indonesian school context where natural (tropical plants, everyday Indonesian objects, modest diverse characters). No violence, no religion, no politics.',
+    '  - Keep it purely pictorial. NEVER use the words infographic, diagram, chart, graph, labeled, annotated, typography, caption, text, letters, numbers, words, or any mention of written elements.',
+    '  - Do NOT add negative instructions such as "no text" - the system appends them automatically.',
+    'ACCURACY RULES:',
+    '  - Classification questions (living/non-living, grouping): choose unmistakable examples of each category and place them in clearly separated zones.',
+    '  - Science: draw plants, animals, body parts and objects with correct characteristic anatomy and colors.',
+    '  - Math: illustrate with real-world objects or clean geometric forms; never rely on written digits or equations.',
+    '  - Social studies: landscapes, plain-colored maps without labels, famous Indonesian landmarks.',
+    '  - Abstract topics (text genres, concept names): invent one concrete everyday scene that symbolizes the idea (e.g. a student explaining a process using real objects), and never show the topic name as lettering, on signs, covers, or anywhere in the scene.',
+    'OUTPUT: ONLY valid JSON (no markdown), schema: {"coreConcept":"...","objects":[{"name":"...","visual":"...","reason":"..."}],"layout":"...","pitfalls":["..."],"prompt":"..."}',
   ].join('\n')
 
   const user = [
     `Subject: ${profile.subject}`,
     `Grade: ${profile.grade} (${profile.level || 'school'})`,
     `Topic/Material: ${question.material || profile.topic}`,
-    `Cognitive level: ${question.cognitiveLevel}`,
-    `Question: ${question.content.slice(0, 400)}`,
+    `Cognitive level: ${question.cognitiveLevel} (${question.difficulty})`,
+    `Learning indicator: ${question.indicator || '-'}`,
+    `Question: ${question.content.slice(0, 500)}`,
     question.options.length > 0 ? `Answer options: ${question.options.slice(0, 6).join(' | ')}` : '',
   ]
     .filter(Boolean)
@@ -792,19 +863,64 @@ export async function composeImagePromptWithAI(
   if (raw) {
     const obj = extractJsonObject(raw)
     const prompt = typeof obj?.prompt === 'string' ? obj.prompt.trim() : ''
-    if (prompt.length >= 30) return prompt
+    if (prompt.length >= 40) return sanitizeImagePrompt(prompt)
     // Fallback: LLM balas teks polos berisi prompt
     const plain = raw.trim().replace(/^```(?:json)?|```$/g, '').trim()
-    if (plain.length >= 30 && plain.length <= 900 && !plain.startsWith('{')) return plain
+    if (plain.length >= 40 && plain.length <= 1200 && !plain.startsWith('{')) {
+      return sanitizeImagePrompt(plain)
+    }
   }
-  // Fallback terakhir: heuristic builder yang sudah ditingkatkan
+  // Fallback terakhir: heuristic builder subject-aware
   return buildImageAutoPrompt(question, profile)
 }
 
-// ---------- 7c. QA otomatis: deteksi teks pada gambar via VLM ----------
-// Model gambar sering menambahkan keterangan teks (seringnya huruf Cina) meskipun
-// prompt melarang. QA ini mendeteksi dan memicu regenerasi otomatis.
-async function imageContainsText(b64: string): Promise<boolean> {
+// ---------- 7b-2. expandCustomImagePrompt: perkaya instruksi singkat guru ----------
+// Instruksi guru yang pendek (mis. "ilustrasi siklus air") diterjemahkan dan
+// diperkaya AI menjadi prompt penuh agar kualitasnya setara mode otomatis.
+export async function expandCustomImagePrompt(
+  directive: string,
+  question: QuestionData,
+  profile: ExamProfileData
+): Promise<string> {
+  const system = [
+    "You enrich a teacher's short illustration instruction into a vivid English image-generation prompt for an Indonesian school exam paper.",
+    "Preserve the teacher's intent exactly; add concrete visual details (objects with shapes/colors, setting, composition) that serve that intent and match the question context.",
+    'Style matched to grade: grade 1-6 cheerful flat storybook cartoon; grade 7-9 modern flat vector illustration; grade 10-12 clean flat vector professional. Soft lighting, plain white background.',
+    'Purely pictorial only: never mention text, letters, numbers, labels, captions, typography, charts or diagrams. Do NOT add negative clauses like "no text".',
+    'Output ONLY JSON: {"prompt":"..."} with one English paragraph of 60-120 words.',
+  ].join('\n')
+
+  const user = [
+    `Teacher directive: ${directive}`,
+    `Subject: ${profile.subject} | Grade: ${profile.grade} (${profile.level || 'school'})`,
+    `Material: ${question.material || profile.topic}`,
+    `Question: ${question.content.slice(0, 300)}`,
+  ].join('\n')
+
+  const raw = await callLLM(system, user, 1)
+  if (raw) {
+    const obj = extractJsonObject(raw)
+    const prompt = typeof obj?.prompt === 'string' ? obj.prompt.trim() : ''
+    if (prompt.length >= 40) return sanitizeImagePrompt(prompt)
+    const plain = raw.trim().replace(/^```(?:json)?|```$/g, '').trim()
+    if (plain.length >= 40 && plain.length <= 1200 && !plain.startsWith('{')) {
+      return sanitizeImagePrompt(plain)
+    }
+  }
+  return directive
+}
+
+// ---------- 7c. QA otomatis via VLM: kritik gambar secara menyeluruh ----------
+// Bukan hanya mendeteksi teks — VLM juga menilai relevansi konsep dan kualitas
+// visual, lalu masalahnya dipakai untuk memperbaiki prompt dan regenerasi.
+interface ImageCritique {
+  hasText: boolean
+  relevant: boolean
+  score: number // 1-10
+  issues: string[]
+}
+
+async function critiqueGeneratedImage(b64: string, brief: string): Promise<ImageCritique | null> {
   try {
     const zai = await getZAI()
     const body = {
@@ -814,7 +930,18 @@ async function imageContainsText(b64: string): Promise<boolean> {
           content: [
             {
               type: 'text' as const,
-              text: 'Look at this illustration carefully. Does it contain ANY visible text such as letters, numbers, words, captions, labels, or characters from any language (including Chinese)? Ignore pictorial elements like drawings of objects. Answer ONLY with JSON: {"hasText": true} or {"hasText": false}',
+              text: [
+                'You are a strict QA reviewer of educational exam illustrations.',
+                'Intended illustration brief:',
+                brief,
+                '',
+                'Inspect the generated image and evaluate:',
+                '1. hasText: does it contain ANY visible text (letters, numbers, words, captions, labels, characters of any language including Chinese)? true/false.',
+                '2. relevant: does it clearly depict the intended subject and key objects from the brief (not a generic or unrelated picture)? true/false.',
+                '3. score: 1-10 suitability for a formal school exam paper, judging object accuracy, visual clarity, appropriate style, and cleanliness. 10 = perfect.',
+                '4. issues: array of short English strings naming concrete visual problems (empty array if flawless).',
+                'Answer ONLY JSON: {"hasText":true,"relevant":true,"score":7,"issues":["..."]}',
+              ].join('\n'),
             },
             { type: 'image_url' as const, image_url: { url: `data:image/png;base64,${b64}` } },
           ],
@@ -833,19 +960,87 @@ async function imageContainsText(b64: string): Promise<boolean> {
           ? raw.map((p: any) => p?.text ?? '').join('')
           : ''
     const obj = extractJsonObject(text)
-    if (obj && typeof obj.hasText === 'boolean') return obj.hasText
-    return /hasText"\s*:\s*true/i.test(text)
+    if (!obj) return null
+    const score = Number(obj.score)
+    return {
+      hasText: obj.hasText === true || /hasText"\s*:\s*true/i.test(text),
+      relevant: obj.relevant !== false && !/"relevant"\s*:\s*false/i.test(text),
+      score: Number.isFinite(score) && score > 0 ? Math.min(10, score) : 5,
+      issues: Array.isArray(obj.issues)
+        ? obj.issues.filter((i) => typeof i === 'string' && i.trim()).slice(0, 6)
+        : [],
+    }
   } catch (err) {
-    console.warn('[imageQA] pemeriksaan VLM gagal, lewati:', err)
-    return false // jangan blokir alur bila QA gagal
+    console.warn('[imageQA] kritik VLM gagal, lewati:', err)
+    return null // jangan blokir alur bila QA gagal
   }
 }
 
+// ---------- 7c-2. refinePromptWithFeedback: perbaiki prompt dari kritik VLM ----------
+async function refinePromptWithFeedback(
+  basePrompt: string,
+  issues: string[],
+  attempt: number
+): Promise<string> {
+  try {
+    const system = [
+      'You are an art director fixing an image-generation prompt after QA feedback on the rendered picture.',
+      'Keep every positive element of the original prompt (subject, objects, style, composition) and rewrite it so the listed problems cannot recur.',
+      'Be concrete: strengthen object descriptions, clarify placement and proportions, and simplify anything that previously caused confusion.',
+      'Purely pictorial only: never mention text, letters, numbers, labels, captions, typography, charts or diagrams; do NOT add negative clauses like "no text".',
+      'Output ONLY JSON: {"prompt":"..."} with one English paragraph of 80-150 words.',
+    ].join('\n')
+    const user = [
+      `Original prompt: ${basePrompt}`,
+      `QA problems to fix: ${issues.map((s, i) => `${i + 1}. ${s}`).join(' ')}`,
+      attempt > 0
+        ? 'This is a second fix round - make the corrections more decisive (change object choices or layout if needed).'
+        : '',
+    ]
+      .filter(Boolean)
+      .join('\n')
+    const raw = await callLLM(system, user, 1)
+    if (raw) {
+      const obj = extractJsonObject(raw)
+      const prompt = typeof obj?.prompt === 'string' ? obj.prompt.trim() : ''
+      if (prompt.length >= 40) return sanitizeImagePrompt(prompt)
+    }
+  } catch (err) {
+    console.warn('[imageQA] refine prompt gagal, pakai koreksi sederhana:', err)
+  }
+  return sanitizeImagePrompt(
+    `${basePrompt} Important corrections: fix these problems seen in the previous render - ${issues.join('; ')}.`
+  )
+}
+
 // ---------- 7d. Background image job runner ----------
-// Pembuatan gambar butuh 30-90 detik; gateway akan memutus request HTTP yang
-// terlalu lama (502). Karena itu pekerjaan berjalan di background dan statusnya
-// disimpan di DB (Question.imageStatus) agar frontend bisa polling.
+// Pembuatan gambar butuh 60-180 detik (compose + render + QA); gateway akan
+// memutus request HTTP yang terlalu lama (502). Karena itu pekerjaan berjalan
+// di background dan statusnya disimpan di DB (Question.imageStatus) agar
+// frontend bisa polling.
 const runningImageJobs = new Map<string, Promise<void>>()
+
+// Variasi render untuk menghindari hasil yang identik saat regenerasi
+const RETRY_VARIATIONS = [
+  '',
+  ' Render with a slightly different object arrangement and camera angle while keeping the same subject, meaning, and style.',
+  ' Alternative visual interpretation: adjust object placement, poses and small details to resolve the reported problems while keeping the same subject and style.',
+]
+
+function buildCritiqueBrief(prompt: string, question: QuestionData): string {
+  return [
+    `- Prompt: ${prompt.slice(0, 350)}`,
+    `- Material: ${question.material || '-'}`,
+    `- Question: ${question.content.replace(/\s+/g, ' ').slice(0, 220)}`,
+  ].join('\n')
+}
+
+// Prompt warisan dari pipeline lama (sebelum peningkatan kecerdasan) — ditandai
+// frasa khas builder lama. Prompt basi seperti ini diabaikan agar soal selalu
+// mendapat komposisi baru dari art director AI.
+function isLegacyAutoPrompt(p: string): boolean {
+  return /Educational textbook illustration|MUST NOT contain|Subject matter:/i.test(p)
+}
 
 async function runImageJob(questionId: string, customPrompt: string | null): Promise<void> {
   try {
@@ -858,29 +1053,79 @@ async function runImageJob(questionId: string, customPrompt: string | null): Pro
     const profile: ExamProfileData = { ...row.structure.profile }
     const question = parseQuestionRow(row)
 
-    // Fase 1 — susun prompt (custom prompt dari guru dipakai apa adanya)
+    // Fase 1 — susun prompt
+    // Mode otomatis: art director AI menganalisis soal lalu menyusun prompt.
+    // Mode custom: instruksi guru pendek diperkaya AI; instruksi panjang dipakai
+    // apa adanya. Prompt basi warisan pipeline lama diabaikan agar selalu ada
+    // komposisi segar.
     await db.question.update({
       where: { id: questionId },
       data: { imageStatus: 'composing', imageError: null },
     })
-    const prompt = customPrompt || (await composeImagePromptWithAI(question, profile))
-
-    // Fase 2 — render gambar (retry internal menangani 401/5xx/timeout)
-    await db.question.update({
-      where: { id: questionId },
-      data: { imageStatus: 'rendering', imagePrompt: prompt },
-    })
-    let b64 = await generateImage(prompt, '1152x864')
-
-    // Fase 3 — QA otomatis: bila gambar memuat teks, regenerasi (maks 2x)
-    for (let qa = 0; qa < 2; qa++) {
-      const hasText = await imageContainsText(b64)
-      if (!hasText) break
-      console.warn(`[imageJob] teks terdeteksi pada gambar soal ${questionId}, regenerasi (${qa + 1})...`)
-      b64 = await generateImage(prompt, '1152x864')
+    const effectiveCustom = customPrompt && !isLegacyAutoPrompt(customPrompt) ? customPrompt : null
+    let basePrompt: string
+    if (effectiveCustom) {
+      basePrompt =
+        effectiveCustom.length >= 150
+          ? effectiveCustom
+          : await expandCustomImagePrompt(effectiveCustom, question, profile)
+    } else {
+      basePrompt = await composeImagePromptWithAI(question, profile)
     }
 
-    const buffer = Buffer.from(b64, 'base64')
+    // Fase 2 — render + kritik VLM + perbaikan mandiri (maks 3 render).
+    // Setiap gambar dinilai VLM: teks asing, relevansi konsep, kualitas visual.
+    // Bila belum memenuhi standar, prompt diperbaiki dari daftar masalah lalu
+    // dirender ulang. Hasil terbaik selalu disimpan — guru tidak pernah tanpa gambar.
+    await db.question.update({
+      where: { id: questionId },
+      data: { imageStatus: 'rendering', imagePrompt: basePrompt },
+    })
+
+    let accepted: { b64: string; usedPrompt: string } | null = null
+    let best: { b64: string; usedPrompt: string; score: number } | null = null
+    let workingPrompt = basePrompt
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const b64 = await generateImage(workingPrompt + RETRY_VARIATIONS[attempt], '1152x864')
+      const critique = await critiqueGeneratedImage(b64, buildCritiqueBrief(basePrompt, question))
+
+      // QA tidak tersedia → terima gambar ini (perilaku aman seperti sebelumnya)
+      if (!critique) {
+        accepted = { b64, usedPrompt: workingPrompt }
+        break
+      }
+
+      // Seleksi "terbaik" memakai skor terkoreksi: gambar berteks dihukum berat
+      // (teks kacau adalah cacat paling merusak naskah ujian), gambar yang tak
+      // relevan dengan konsep soal juga dihukum.
+      const adjusted =
+        critique.score - (critique.hasText ? 3 : 0) - (critique.relevant ? 0 : 2)
+      if (!best || adjusted > best.score) {
+        best = { b64, usedPrompt: workingPrompt, score: adjusted }
+      }
+
+      const ok = !critique.hasText && critique.relevant && critique.score >= 7
+      console.log(
+        `[imageJob] soal ${questionId} render ${attempt + 1}: score=${critique.score}/10 adjusted=${adjusted} hasText=${critique.hasText} relevant=${critique.relevant} issues=${critique.issues.join(' | ') || '-'}`
+      )
+      if (ok) {
+        accepted = { b64, usedPrompt: workingPrompt }
+        break
+      }
+      if (attempt < 2) {
+        const issues =
+          critique.issues.length > 0
+            ? critique.issues
+            : ['the illustration does not match the question topic clearly enough']
+        workingPrompt = await refinePromptWithFeedback(basePrompt, issues, attempt)
+      }
+    }
+
+    const finalImage = accepted ?? best
+    if (!finalImage) throw new Error('Semua percobaan render gagal')
+
+    const buffer = Buffer.from(finalImage.b64, 'base64')
     const dir = path.join(process.cwd(), 'public', 'generated')
     await fsp.mkdir(dir, { recursive: true })
     const filename = `${questionId}-${Date.now()}.png`
@@ -898,7 +1143,7 @@ async function runImageJob(questionId: string, customPrompt: string | null): Pro
     await db.question.update({
       where: { id: questionId },
       data: {
-        imagePrompt: prompt,
+        imagePrompt: finalImage.usedPrompt,
         imagePath: `/generated/${filename}`,
         imageStatus: 'done',
         imageError: null,
